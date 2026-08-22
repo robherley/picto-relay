@@ -1,0 +1,28 @@
+{
+  "format_version": 1,
+  "status": "complete",
+  "scenario": "two virtual dots with fixed tag and frame counters but repeated controls",
+  "interface": "wlan1mon",
+  "channel": 1,
+  "tags": {
+    "backend": "ar9271-firmware-assist",
+    "direction": "virtual-client-to-real-ds-host",
+    "drawing": "two-3x3-dots",
+    "result": "only-first-rendered",
+    "room": "A"
+  },
+  "notes": "Both transfers used opaque tag zero and session-global fragment frame counters. The host rebroadcast both fragment sets, but echoed an announcement only for the first transfer; the DS rendered only that first dot. This isolated the d0a command, nonce, and transfer counters as per-transfer state.",
+  "pcap_file": "20260820-two-virtual-dots-only-first-rendered.pcap",
+  "sha256": "425b884d37197e678f611929eff4647a236c90d020022ba412953bcb32fd9e35",
+  "packets": 38282,
+  "captured_bytes": 3747003,
+  "file_bytes": 4359539,
+  "evidence": {
+    "host": "00:24:f3:67:41:87",
+    "station": "00:09:bf:52:00:01",
+    "completed_messages": 2,
+    "host_announcement_echoes": 1,
+    "ds_rendered_messages": 1
+  },
+  "error": null
+}

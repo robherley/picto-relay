@@ -1,0 +1,15 @@
+[package]
+name = "picto-relay-engine"
+description = "Deterministic protocol engine for Picto Relay"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+picto-relay-codec.workspace = true
+picto-relay-radio.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

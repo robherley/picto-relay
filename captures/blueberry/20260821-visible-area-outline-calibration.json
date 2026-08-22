@@ -1,0 +1,28 @@
+{
+  "format_version": 1,
+  "status": "partial",
+  "scenario": "physical DS visible-area and nametag-exclusion outline",
+  "interface": "wlan1mon",
+  "channel": 1,
+  "tags": {
+    "direction": "real-ds-host-to-virtual-client",
+    "drawing": "visible-area-outline",
+    "purpose": "text-layout-calibration",
+    "room": "A"
+  },
+  "notes": "The final PCAP record is truncated because the gateway was stopped after the calibration, but the complete 10,276-byte outline message precedes it and reassembles cleanly. The rough contour identifies an outer visible region near x=24..244,y=0..76 and a top-left nametag exclusion near x=24..85,y=0..16. Picto Relay uses conservative one-band text bounds x=88..243.",
+  "pcap_file": "20260821-visible-area-outline-calibration.pcap",
+  "sha256": "f6ed0ff704635dcdaf8d73cdbccdadfc7e65e33e516737ca1f1692cf915235dc",
+  "file_bytes": 19133841,
+  "evidence": {
+    "host": "00:24:f3:67:41:87",
+    "station": "00:09:bf:52:00:01",
+    "message_bytes": 10276,
+    "encoded_height": 80,
+    "ink_bounds": "x=24..251,y=0..79",
+    "calibrated_outer_interior": "x=28..244,y=1..76",
+    "calibrated_nametag_exclusion": "x=24..85,y=0..16",
+    "conservative_one_band_text_range": "x=88..243,y=0..15"
+  },
+  "error": "truncated final PCAP record after the complete calibration message"
+}

@@ -1,0 +1,16 @@
+[package]
+name = "picto-relay-codec"
+description = "Nintendo PictoChat packet codecs for Picto Relay"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

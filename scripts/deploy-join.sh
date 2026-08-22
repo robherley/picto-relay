@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly DEFAULT_HOST="rob@blueberry.lab.reb.gg"
+readonly DEFAULT_TARGET="aarch64-unknown-linux-gnu"
+readonly DEFAULT_DESTINATION="/home/rob/.local/bin/picto-relay-join"
+readonly DEFAULT_REMOTE_PROJECT="/home/rob/picto-relay"
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+
+host="${PICTO_RELAY_PI_HOST:-${DEFAULT_HOST}}"
+target="${PICTO_RELAY_PI_TARGET:-${DEFAULT_TARGET}}"
+destination="${PICTO_RELAY_PI_JOIN:-${DEFAULT_DESTINATION}}"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--host USER@HOST] [--destination PATH] [--target TRIPLE]
+
+Build and deploy the active Picto Relay join probe to the Raspberry Pi. It
+cross-compiles when zig is available and otherwise builds natively on the Pi.
+
+Options:
+  --host VALUE        SSH destination (default: ${DEFAULT_HOST}).
+  --destination PATH  Remote binary path (default: ${DEFAULT_DESTINATION}).
+  --target TRIPLE     Rust target (default: ${DEFAULT_TARGET}).
+  -h, --help          Show this help.
+EOF
+}
+
+while (($#)); do
+  case "$1" in
+    --host)
+      [[ $# -ge 2 ]] || { echo "error: --host requires a value" >&2; exit 2; }
+      host="$2"
+      shift 2
+      ;;
+    --destination)
+      [[ $# -ge 2 ]] || { echo "error: --destination requires a value" >&2; exit 2; }
+      destination="$2"
+      shift 2
+      ;;
+    --target)
+      [[ $# -ge 2 ]] || { echo "error: --target requires a value" >&2; exit 2; }
+      target="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "error: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+command -v rsync >/dev/null 2>&1 || {
+  echo "error: rsync is required" >&2
+  exit 1
+}
+command -v ssh >/dev/null 2>&1 || {
+  echo "error: ssh is required" >&2
+  exit 1
+}
+[[ "$destination" =~ ^/[a-zA-Z0-9._/-]+$ ]] || {
+  echo "error: destination must be an absolute safe path" >&2
+  exit 2
+}
+
+readonly remote_dir="${destination%/*}"
+if command -v cargo-zigbuild >/dev/null 2>&1 && command -v zig >/dev/null 2>&1; then
+  printf 'Cross-compiling active join probe for %s\n' "$target"
+  cargo zigbuild \
+    --manifest-path "${PROJECT_ROOT}/Cargo.toml" \
+    --release \
+    --locked \
+    --target "$target" \
+    --package picto-relay-join
+
+  readonly binary="${PROJECT_ROOT}/target/${target}/release/picto-relay-join"
+  ssh -- "$host" "mkdir -p -- '$remote_dir'"
+  rsync --archive --compress --human-readable --itemize-changes -- \
+    "$binary" "$host:$destination"
+  ssh -- "$host" "chmod 0755 -- '$destination'"
+else
+  readonly remote_project="${PICTO_RELAY_PI_DIR:-${DEFAULT_REMOTE_PROJECT}}"
+  [[ "$remote_project" =~ ^/[a-zA-Z0-9._/-]+$ ]] || {
+    echo "error: PICTO_RELAY_PI_DIR must be an absolute safe path" >&2
+    exit 2
+  }
+  printf 'zig is unavailable; building the active join probe natively on the Pi\n'
+  PICTO_RELAY_PI_HOST="$host" PICTO_RELAY_PI_DIR="$remote_project" \
+    "${SCRIPT_DIR}/sync-pi.sh"
+  ssh -- "$host" \
+    "cd '$remote_project' && cargo build --release --locked --package picto-relay-join && mkdir -p -- '$remote_dir' && install -m 0755 -- target/release/picto-relay-join '$destination'"
+fi
+printf 'Deployed %s:%s\n' "$host" "$destination"

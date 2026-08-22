@@ -1,0 +1,50 @@
+{
+  "format_version": 1,
+  "status": "complete",
+  "scenario": "joined client bitmap validation",
+  "interface": "wlan1",
+  "monitor_prepared": true,
+  "channel": 1,
+  "tags": {
+    "drawing": "bitmap-validation",
+    "sender": "joined-second",
+    "sequence": "top-left-dot,horizontal,vertical,bottom-right-thick"
+  },
+  "notes": "Each cleared shape sent twice unchanged; use only the console that joins second",
+  "started_unix_ms": 1786660066567,
+  "ended_unix_ms": 1786660250928,
+  "pcap_file": "1786660066567-joined-client-bitmap-validation.pcap",
+  "packets": 83391,
+  "captured_bytes": 8327898,
+  "decoded": {
+    "ieee80211_frames": 83391,
+    "malformed_radiotap": 0,
+    "malformed_ieee80211": 0,
+    "nintendo_frames": 78476,
+    "room_changes": 3,
+    "associations": 1,
+    "leaves": 7,
+    "broadcast_deauthentications": 9,
+    "message_fragments": 464,
+    "completed_messages": 0,
+    "failed_reply_rounds": 1870,
+    "packet_families": {
+      "client:0x8c34": 1,
+      "client:0x8d0a": 20,
+      "client:0x8e08": 5,
+      "client:0x8e18": 1,
+      "client:0x8e30": 2,
+      "client:0x8e48": 1,
+      "client:0x8e56": 208,
+      "host:0x1c34": 12460,
+      "host:0x1d0a": 10,
+      "host:0x1e30": 4,
+      "host:0x1e56": 179,
+      "host:0x9c34": 4492,
+      "host:0x9d0a": 4,
+      "host:0x9e30": 2,
+      "host:0x9e56": 72
+    }
+  },
+  "error": null
+}

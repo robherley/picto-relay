@@ -1,0 +1,31 @@
+{
+  "format_version": 1,
+  "status": "partial",
+  "scenario": "virtual client outbound dot before firmware commit barrier",
+  "interface": "wlan1mon",
+  "channel": 1,
+  "tags": {
+    "backend": "ar9271-firmware-assist",
+    "direction": "virtual-client-to-real-ds-host",
+    "drawing": "3x3-dot",
+    "firmware": "pre-commit-barrier",
+    "result": "host-rebroadcast-complete",
+    "room": "A"
+  },
+  "notes": "Live copy of an open capture; its final PCAP record is truncated. Before the truncated tail it contains successful authentication, association into slot 1, profile initialization, and a complete 2,084-byte host rebroadcast of the virtual station's 256x16 dot drawing at 3.419 seconds. Keep as supporting evidence, not the canonical finalized capture.",
+  "started_unix_ms": 1787274121174,
+  "ended_unix_ms": 1787274318313,
+  "pcap_file": "1787274121174-virtual-client-outbound-dot-pre-commit-partial.pcap",
+  "sha256": "63a4a2b96f0c48e09a39b5839a18b5efd72a74739fba82113730037a82fab767",
+  "packets": 88827,
+  "captured_bytes": 8670500,
+  "evidence": {
+    "host": "00:24:f3:67:41:87",
+    "station": "00:09:bf:52:00:01",
+    "assigned_slot": 1,
+    "completed_messages": 1,
+    "drawing_bytes": 2084,
+    "ink_bounds": "x=126..128,y=0..2"
+  },
+  "error": "truncated final PCAP record from live file copy"
+}

@@ -1,0 +1,33 @@
+{
+  "format_version": 1,
+  "status": "complete",
+  "scenario": "virtual-identity-stall",
+  "interface": "wlan1mon",
+  "monitor_prepared": false,
+  "channel": null,
+  "tags": {
+    "expected": "two-pass-profile",
+    "firmware": "490fe046"
+  },
+  "notes": "Host accepts session but does not request profile",
+  "started_unix_ms": 1787184622984,
+  "ended_unix_ms": 1787184648003,
+  "pcap_file": "1787184622984-virtual-identity-stall.pcap",
+  "packets": 1295,
+  "captured_bytes": 245264,
+  "decoded": {
+    "ieee80211_frames": 1295,
+    "malformed_radiotap": 0,
+    "malformed_ieee80211": 0,
+    "nintendo_frames": 0,
+    "room_changes": 1,
+    "associations": 0,
+    "leaves": 0,
+    "broadcast_deauthentications": 10,
+    "message_fragments": 0,
+    "completed_messages": 0,
+    "failed_reply_rounds": 0,
+    "packet_families": {}
+  },
+  "error": null
+}

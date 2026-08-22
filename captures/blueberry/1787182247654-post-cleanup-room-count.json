@@ -1,0 +1,30 @@
+{
+  "format_version": 1,
+  "status": "complete",
+  "scenario": "post-cleanup-room-count",
+  "interface": "wlan1mon",
+  "monitor_prepared": false,
+  "channel": null,
+  "tags": {},
+  "notes": null,
+  "started_unix_ms": 1787182247654,
+  "ended_unix_ms": 1787182250690,
+  "pcap_file": "1787182247654-post-cleanup-room-count.pcap",
+  "packets": 122,
+  "captured_bytes": 22149,
+  "decoded": {
+    "ieee80211_frames": 122,
+    "malformed_radiotap": 0,
+    "malformed_ieee80211": 0,
+    "nintendo_frames": 0,
+    "room_changes": 1,
+    "associations": 0,
+    "leaves": 0,
+    "broadcast_deauthentications": 1,
+    "message_fragments": 0,
+    "completed_messages": 0,
+    "failed_reply_rounds": 0,
+    "packet_families": {}
+  },
+  "error": null
+}

@@ -1,0 +1,31 @@
+{
+  "format_version": 1,
+  "status": "complete",
+  "scenario": "virtual client authentication timeout while Room A advertised two users",
+  "interface": "wlan1mon",
+  "channel": 1,
+  "tags": {
+    "backend": "ar9271-firmware-assist",
+    "direction": "virtual-client-to-real-ds-host",
+    "phase": "authentication",
+    "result": "timeout",
+    "room": "A"
+  },
+  "notes": "This was originally named outbound-message-debug-1, but it contains no association or drawing transfer. Room A advertised two users and the virtual station sent four authentication requests without a host response. It is an authentication-timeout diagnostic, not outbound-message evidence.",
+  "started_unix_ms": 1787274651933,
+  "ended_unix_ms": 1787274655021,
+  "pcap_file": "1787274651933-virtual-client-auth-timeout-room-already-occupied.pcap",
+  "sha256": "6258308b3762c0fdb3ff3acdbec75d13da635c0c96fe5d30c37bb701803f5aa8",
+  "packets": 1461,
+  "captured_bytes": 179138,
+  "evidence": {
+    "host": "00:24:f3:67:41:87",
+    "station": "00:09:bf:52:00:01",
+    "room_users": 2,
+    "authentication_requests": 4,
+    "associations": 0,
+    "completed_messages": 0,
+    "nintendo_frames": 1429
+  },
+  "error": null
+}

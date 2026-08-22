@@ -1,0 +1,16 @@
+{
+  "format_version": 1,
+  "status": "complete",
+  "scenario": "proactive HTC credit return negative control",
+  "tags": {
+    "direction": "virtual-client-to-real-ds-host",
+    "outcome": "one-band delivered; three-band timeout",
+    "maximum_firmware_cursor": 25,
+    "firmware_sha256": "446bd76b8a9f8b368bb279828301ad8336eabd087405a50898d360d31faed50e"
+  },
+  "notes": "Proactively reporting returned HTC credits did not move the cursor-25 boundary, ruling out credit-report thresholding as the complete fix.",
+  "pcap_file": "20260821-proactive-credit-return.pcap",
+  "pcap_bytes": 4178535,
+  "pcap_sha256": "a405b114fda444b4b95e2393692d578875c150f1ab597ae84bf11c9a312f09bd",
+  "decoded": {"packets": 27717, "captured_bytes": 3735039, "completed_messages": 1}
+}

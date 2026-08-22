@@ -1,0 +1,32 @@
+{
+  "format_version": 1,
+  "status": "complete",
+  "scenario": "client one pixel",
+  "interface": "wlan1",
+  "monitor_prepared": true,
+  "channel": 1,
+  "tags": {
+    "coordinate": "128,48",
+    "drawing": "one-pixel",
+    "sender": "client"
+  },
+  "notes": null,
+  "started_unix_ms": 1785458857956,
+  "ended_unix_ms": 1785458888011,
+  "pcap_file": "1785458857956-client-one-pixel.pcap",
+  "packets": 1011,
+  "captured_bytes": 194631,
+  "decoded": {
+    "ieee80211_frames": 1011,
+    "malformed_radiotap": 0,
+    "malformed_ieee80211": 0,
+    "nintendo_frames": 0,
+    "room_changes": 5,
+    "associations": 0,
+    "message_fragments": 0,
+    "completed_messages": 0,
+    "failed_reply_rounds": 0,
+    "packet_families": {}
+  },
+  "error": null
+}

@@ -1,0 +1,44 @@
+{
+  "format_version": 1,
+  "status": "complete",
+  "scenario": "real-ds-clean-join-baseline",
+  "interface": "wlan1",
+  "monitor_prepared": true,
+  "channel": 1,
+  "tags": {
+    "devices": "two-real-ds",
+    "traffic": "join-only"
+  },
+  "notes": "Cold Room A host, second real DS joins, idles, then leaves; no messages",
+  "started_unix_ms": 1787193673345,
+  "ended_unix_ms": 1787193708534,
+  "pcap_file": "1787193673345-real-ds-clean-join-baseline.pcap",
+  "packets": 6251,
+  "captured_bytes": 573142,
+  "decoded": {
+    "ieee80211_frames": 6251,
+    "malformed_radiotap": 0,
+    "malformed_ieee80211": 0,
+    "nintendo_frames": 6069,
+    "room_changes": 3,
+    "associations": 1,
+    "leaves": 1,
+    "broadcast_deauthentications": 5,
+    "message_fragments": 0,
+    "completed_messages": 0,
+    "failed_reply_rounds": 6,
+    "packet_families": {
+      "client:0x0d0a": 1,
+      "client:0x8c34": 1,
+      "client:0x8d0a": 3,
+      "client:0x8e30": 2,
+      "host:0x1c34": 847,
+      "host:0x1d0a": 4,
+      "host:0x1e30": 3,
+      "host:0x9c34": 406,
+      "host:0x9d0a": 1,
+      "host:0x9e30": 2
+    }
+  },
+  "error": null
+}

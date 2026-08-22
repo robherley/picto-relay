@@ -1,0 +1,14 @@
+[package]
+name = "picto-relay-radio"
+description = "Radio abstraction and scripted backend for Picto Relay"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+pnet.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

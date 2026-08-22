@@ -1,0 +1,16 @@
+{
+  "format_version": 1,
+  "status": "complete",
+  "scenario": "in-place ring copy with over-air refill uploads",
+  "tags": {
+    "direction": "virtual-client-to-real-ds-host",
+    "outcome": "one-band delivered; three-band timeout",
+    "purpose": "target-tx-descriptor-isolation",
+    "firmware_sha256": "6d25ed1027b3781c989ce3afcbb7e6b70d6ff9320401f0f8cdbcb4a4571661d7"
+  },
+  "notes": "Refreshed bodies are valid and rebroadcast in order, but temporary refill uploads still traverse the Wi-Fi TX queue and the stream stalls. This motivated returning refill uploads directly to HTC.",
+  "pcap_file": "20260821-in-place-message-ring-retry.pcap",
+  "pcap_bytes": 973215,
+  "pcap_sha256": "ff6bb372729462f5a573d9baff30f0f6f03f0b6f0f578cf6fe19981dcd6e734b",
+  "decoded": {"packets": 8105, "captured_bytes": 843511, "completed_messages": 1}
+}

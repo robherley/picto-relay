@@ -1,0 +1,28 @@
+{
+  "format_version": 1,
+  "status": "complete",
+  "scenario": "second session before transfer-sequencing fix",
+  "interface": "wlan1mon",
+  "channel": 1,
+  "tags": {
+    "backend": "ar9271-firmware-assist",
+    "direction": "virtual-client-to-real-ds-host",
+    "drawing": "3x3-dot",
+    "result": "false-delivery-then-timeout",
+    "room": "A"
+  },
+  "notes": "The virtual station rejoined without a firmware reload. The old broker correlated its locally observed transfer with API message 1 even though the DS did not render it, then the next transfer timed out. This capture motivated requiring a matching host d0a announcement echo before reporting delivery.",
+  "pcap_file": "20260820-test2-false-delivery-and-timeout.pcap",
+  "sha256": "9d61fef9b09f7a772b66f115b8b82c67f67cab6557d62f040aa5492805735e35",
+  "packets": 25656,
+  "captured_bytes": 2519484,
+  "file_bytes": 2930004,
+  "evidence": {
+    "host": "00:24:f3:67:41:87",
+    "station": "00:09:bf:52:00:01",
+    "completed_messages": 1,
+    "ds_rendered_messages": 0,
+    "api_result": "one false delivered event followed by one delivery timeout"
+  },
+  "error": null
+}

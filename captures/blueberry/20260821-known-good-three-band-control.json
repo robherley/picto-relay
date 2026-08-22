@@ -1,0 +1,15 @@
+{
+  "format_version": 1,
+  "status": "partial",
+  "scenario": "known-good firmware three-band cursor-25 control",
+  "tags": {
+    "direction": "virtual-client-to-real-ds-host",
+    "outcome": "timeout",
+    "maximum_firmware_cursor": 25,
+    "last_rebroadcast_offset": "0x0e60"
+  },
+  "notes": "Negative baseline. The host accepts the announcement and 24 contiguous drawing fragments, then the refill stream stops. The final PCAP record is truncated, but all cited cursor and fragment records precede it.",
+  "pcap_file": "20260821-known-good-three-band-control.pcap",
+  "pcap_bytes": 966945,
+  "pcap_sha256": "8c01b1745ab83e0d59b45775b56fe8f3ecaa2eb81865312c6d25853109766b00"
+}

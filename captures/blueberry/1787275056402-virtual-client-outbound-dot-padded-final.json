@@ -1,0 +1,35 @@
+{
+  "format_version": 1,
+  "status": "complete",
+  "scenario": "virtual client joins real DS host and sends dot with padded final rebroadcast",
+  "interface": "wlan1mon",
+  "channel": 1,
+  "tags": {
+    "backend": "ar9271-firmware-assist",
+    "direction": "virtual-client-to-real-ds-host",
+    "drawing": "3x3-dot",
+    "firmware": "commit-barrier",
+    "result": "delivered-and-rebroadcast",
+    "room": "A"
+  },
+  "notes": "Canonical outbound-message capture. The virtual station authenticates, associates into slot 1, completes profile initialization, sends a 2,084-byte 256x16 dot drawing, and the real DS host rebroadcasts all fourteen fragments. The final logical four-byte fragment is physically padded to a 160-byte host transfer slot; this capture identified the decoder bug that previously produced a false delivery timeout.",
+  "started_unix_ms": 1787275056402,
+  "ended_unix_ms": 1787275415970,
+  "pcap_file": "1787275056402-virtual-client-outbound-dot-padded-final.pcap",
+  "sha256": "4e275ced6a652e933c7d1b6477a0d3bd2414f0b8ea40aa2ec13569f0d6572050",
+  "packets": 165828,
+  "captured_bytes": 16136695,
+  "evidence": {
+    "host": "00:24:f3:67:41:87",
+    "station": "00:09:bf:52:00:01",
+    "assigned_slot": 1,
+    "completed_messages": 1,
+    "drawing_bytes": 2084,
+    "ink_bounds": "x=126..128,y=0..2",
+    "nintendo_frames": 162390,
+    "final_fragment_offset": "0x0820",
+    "final_fragment_logical_bytes": 4,
+    "final_fragment_physical_slot_bytes": 160
+  },
+  "error": null
+}

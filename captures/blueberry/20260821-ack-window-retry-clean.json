@@ -1,0 +1,36 @@
+{
+  "format_version": 1,
+  "status": "diagnostic-mixed",
+  "scenario": "drawing retransmission fixes two one-band sends before a five-band cursor-50 stall",
+  "interface": "wlan1mon",
+  "channel": 1,
+  "tags": {
+    "backend": "ar9271-firmware-assist",
+    "direction": "virtual-client-to-real-ds-host",
+    "drawing": "HELLO, HELLO AGAIN, five-band text, then a four-band dot",
+    "purpose": "acknowledgement-retransmission-and-sliding-ring-verification",
+    "room": "A"
+  },
+  "notes": "The acknowledgement-retransmission firmware delivered HELLO and HELLO AGAIN consecutively. Both host rebroadcasts are complete; HELLO includes offset 0x0640, whose earlier omission visibly removed the lower half of its final O. A later 67-reply five-band text transfer is contiguous only through offset 0x1e00 and stalls at cumulative cursor 50. The following four-band dot times out after the participant stops progressing. This capture proves the one-band clipping fix but is negative evidence for the current multi-band sliding ring.",
+  "pcap_file": "20260821-ack-window-retry-clean.pcap",
+  "log_file": "20260821-ack-window-retry-clean.log",
+  "sha256": "6d2b6fb1e357e463bf07363816a175dee623b0b6e7218e6725662f832412b51c",
+  "packets": 16959,
+  "captured_bytes": 1891736,
+  "file_bytes": 2163104,
+  "evidence": {
+    "host": "00:24:f3:67:41:87",
+    "station": "00:09:bf:52:00:01",
+    "assigned_slot": 1,
+    "completed_messages": 2,
+    "completed_text": ["HELLO", "HELLO AGAIN"],
+    "hello_ink_bounds": {"min_x": 88, "max_x": 145, "min_y": 1, "max_y": 14},
+    "hello_final_offset": "0x0820",
+    "hello_previously_missing_offset_present": "0x0640",
+    "multi_band_expected_replies": 67,
+    "multi_band_stalled_cursor": 50,
+    "multi_band_last_rebroadcast_offset": "0x1e00",
+    "multi_band_result": "delivery timeout",
+    "following_dot_result": "delivery timeout"
+  }
+}

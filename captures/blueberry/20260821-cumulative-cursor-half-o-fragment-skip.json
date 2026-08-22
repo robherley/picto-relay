@@ -1,0 +1,33 @@
+{
+  "format_version": 1,
+  "status": "diagnostic-partial",
+  "scenario": "cumulative-cursor session skips drawing fragments, visibly cutting the final O in HELLO",
+  "interface": "wlan1mon",
+  "channel": 1,
+  "tags": {
+    "backend": "ar9271-firmware-assist",
+    "direction": "virtual-client-to-real-ds-host",
+    "drawing": "HELLO followed by additional short and multi-band text",
+    "purpose": "drawing-acknowledgement-window-race",
+    "room": "A"
+  },
+  "notes": "The real DS displayed HELLO with the lower half of the final O missing. The first host rebroadcast contains offsets 0x0000 through 0x05a0, then jumps to 0x06e0: offset 0x0640 is absent and contains the O's lower tile row. Firmware cursor telemetry at logical reply 11 shows an idle reply queued while the preceding drawing acknowledgement was unresolved; a later idle acknowledgement advanced the drawing cursor. Later messages omit other offsets through the same race. The capture ends with a truncated PCAP record because the server capture writer did not finalize its last record; all cited first-message frames precede that record and decode cleanly.",
+  "pcap_file": "20260821-cumulative-cursor-half-o-fragment-skip.pcap",
+  "log_file": "20260821-cumulative-cursor-half-o-fragment-skip.log",
+  "sha256": "0533577c79a5759128b373b7617532053849b4ffeac48fa6057504c532e78deb",
+  "file_bytes": 2735491,
+  "evidence": {
+    "host": "00:24:f3:67:41:87",
+    "station": "00:09:bf:52:00:01",
+    "assigned_slot": 1,
+    "physical_result": "HELLO rendered with the lower half of O missing",
+    "first_transfer_expected_offsets": [
+      "0x0000", "0x00a0", "0x0140", "0x01e0", "0x0280", "0x0320",
+      "0x03c0", "0x0460", "0x0500", "0x05a0", "0x0640", "0x06e0",
+      "0x0780", "0x0820"
+    ],
+    "first_transfer_missing_offsets": ["0x0640"],
+    "firmware_cursor_at_idle_substitution": 11,
+    "pcap_final_record_truncated": true
+  }
+}
