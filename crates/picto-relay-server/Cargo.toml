@@ -1,6 +1,6 @@
 [package]
 name = "picto-relay-server"
-description = "Application runner for Picto Relay"
+description = "Room-aware JSON and web gateway for Picto Relay"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -12,9 +12,7 @@ axum.workspace = true
 base64.workspace = true
 clap.workspace = true
 picto-relay-codec.workspace = true
-picto-relay-engine.workspace = true
 picto-relay-join.workspace = true
-picto-relay-radio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

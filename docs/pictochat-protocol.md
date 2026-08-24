@@ -25,7 +25,7 @@ physically verified, not merely reproduced from captures:
 | Multiple simultaneous virtual stations | Not implemented | Wire slots support it, current firmware owns one station/slot |
 
 The radio timing portion is adapter-firmware work. Discovery, frame construction,
-state tracking, drawing encoding, reassembly, and the JSON/REPL interface are Rust.
+state tracking, drawing encoding, reassembly, and the JSON interface are Rust.
 
 ## Confidence labels
 
@@ -217,6 +217,11 @@ Three Nintendo multicast addresses distinguish the flows:
 | Client reply | Address 1 = host, Address 3 `03:09:bf:00:00:10`, To-DS | Data (`1`) | none |
 | Host acknowledgement | Address 1 `03:09:bf:00:00:03` | Data (`1`) | `command_count: u16`, `failed_client_mask: u16` |
 
+The host BSSID is not a protocol constant. A client learns it from the selected room
+beacon's transmitter address (802.11 Address 2) and uses that value for the lifetime
+of the association. The `03:09:bf:*` addresses above are fixed Nintendo logical
+multiplayer destinations; they must not be substituted for the discovered BSSID.
+
 There is no SNAP/LLC header in the captured Nintendo payload.
 
 ### Host command
@@ -381,6 +386,16 @@ capture-derived value is currently accepted by the host, which suggests it is a 
 nonce or opaque session value rather than a challenge response, but that interpretation
 is only inferred.
 
+### Member/session roster
+
+The 104-byte payload of a host `c34` packet contains four opaque prefix bytes,
+sixteen six-byte station entries, and four opaque suffix bytes. Slot zero is the host;
+the remaining nonzero entries are admitted participants. Each MAC uses the same three
+little-endian 16-bit words as the profile record, and an all-zero entry is vacant.
+Joining this slot table to the `e30` identity records yields the room's display-name
+roster. A client leave is also directly observable as an 802.11 deauthentication from
+that station.
+
 ### Identity/profile record
 
 An `e30` fragment carries exactly 84 record bytes:
@@ -397,6 +412,9 @@ An `e30` fragment carries exactly 84 record bytes:
 | `0x53` | 1 | Birthday byte | Capture-derived |
 
 For MAC `00:16:56:4d:27:ca`, the stored bytes are `16 00 4d 56 ca 27`.
+Nickname padding is not uniform across captured consoles: ASCII names use trailing
+U+0000 units, while the captured Japanese nickname uses trailing U+3000 ideographic
+spaces. Display decoders trim either form at the end of the fixed-width field.
 The order/validation rules for the two birthday bytes and the complete color mapping
 remain unresolved.
 

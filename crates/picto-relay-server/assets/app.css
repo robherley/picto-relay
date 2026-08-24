@@ -1,0 +1,184 @@
+:root {
+  color-scheme: light;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color: #172019;
+  background: #eaf2eb;
+  --ink: #172019;
+  --green: #4b8f52;
+  --green-light: #dcebdd;
+  --panel: #ffffff;
+  --line: #7d8c80;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+button, input { font: inherit; }
+
+button {
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  padding: 0.55rem 0.8rem;
+  color: var(--ink);
+  background: #f7faf7;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 var(--line);
+}
+
+button:hover, button:focus-visible, button.selected {
+  background: var(--green-light);
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
+}
+
+button:disabled { cursor: not-allowed; opacity: 0.5; }
+
+input {
+  min-width: 0;
+  border: 2px solid var(--ink);
+  padding: 0.55rem;
+  background: white;
+}
+
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 0.25rem; font-size: 1.25rem; }
+h2 { font-size: 1rem; }
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem max(1rem, calc((100vw - 960px) / 2));
+  color: white;
+  background: var(--green);
+  border-bottom: 3px solid var(--ink);
+}
+
+main {
+  width: min(960px, 100%);
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+section {
+  border: 2px solid var(--ink);
+  padding: 1rem;
+  background: var(--panel);
+  box-shadow: 4px 4px 0 var(--line);
+}
+
+.section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.section-heading label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.rooms {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.room {
+  min-height: 150px;
+  border: 2px solid var(--line);
+  padding: 0.75rem;
+  background: #f9fbf9;
+}
+
+.room h2 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--line);
+}
+.room-count { color: #536057; font-size: 0.7rem; font-weight: normal; white-space: nowrap; }
+.room ul, aside ul { min-height: 2rem; margin: 0 0 0.75rem; padding-left: 1.2rem; }
+.room button { width: 100%; }
+.hint, .status, .empty { color: #536057; }
+.hint { margin: 0.8rem 0 0; font-size: 0.8rem; }
+.status { margin: 0; font-size: 0.85rem; }
+
+.chat-layout {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 1rem;
+}
+
+aside {
+  border-right: 2px solid var(--line);
+  padding-right: 0.75rem;
+}
+
+.messages {
+  height: 290px;
+  overflow-y: auto;
+  border: 2px solid var(--line);
+  padding: 0.6rem;
+  background: #f8fbf8;
+}
+
+.message { margin-bottom: 0.75rem; }
+.message header { margin-bottom: 0.2rem; font-size: 0.8rem; color: #3c4840; }
+.message canvas {
+  display: block;
+  width: min(100%, 512px);
+  height: auto;
+  border: 1px solid var(--line);
+  background: white;
+  image-rendering: pixelated;
+}
+.message.system { padding: 0.4rem; border-left: 4px solid var(--green); background: var(--green-light); }
+.message.presence { font-size: 0.85rem; }
+.message.presence.left { border-left-color: var(--line); background: #edf0ed; }
+.message.error { border-left-color: #b34c4c; background: #f5dddd; }
+
+.composer { margin-top: 0.8rem; }
+#drawing {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 288px;
+  border: 3px solid var(--ink);
+  background: white;
+  image-rendering: pixelated;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.tools, #text-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+#text-form input { flex: 1; }
+
+@media (max-width: 720px) {
+  .rooms { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .chat-layout { grid-template-columns: 1fr; }
+  aside { border-right: 0; border-bottom: 2px solid var(--line); padding: 0 0 0.5rem; }
+  aside ul { margin-bottom: 0; }
+  .tools { flex-wrap: wrap; }
+}
+
+@media (max-width: 440px) {
+  .rooms { grid-template-columns: 1fr; }
+  .section-heading { align-items: stretch; flex-direction: column; }
+  .section-heading label { justify-content: space-between; }
+  #text-form { flex-direction: column; }
+}

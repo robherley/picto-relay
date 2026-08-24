@@ -3,6 +3,8 @@
 `picto-relay-join` implements the physical Nintendo DS client session. It discovers a
 DS-hosted PictoChat room, authenticates, associates, completes the two profile passes,
 maintains slot-poll replies through the custom AR9271 firmware, and exchanges drawings.
+While joined, it combines host `c34` slot rosters with `e30` profiles to report physical
+DS nicknames and removes clients observed sending a leave deauthentication.
 
 The package provides two entry points:
 

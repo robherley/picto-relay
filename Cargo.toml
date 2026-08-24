@@ -1,11 +1,9 @@
 [workspace]
 members = [
     "crates/picto-relay-codec",
-    "crates/picto-relay-engine",
     "crates/picto-relay-join",
     "crates/picto-relay-listener",
     "crates/picto-relay-radio",
-    "crates/picto-relay-repl",
     "crates/picto-relay-server",
 ]
 resolver = "3"
@@ -18,21 +16,18 @@ version = "0.1.0"
 
 [workspace.dependencies]
 anyhow = "1.0"
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 clap = { version = "4.6.4", features = ["derive"] }
 picto-relay-codec = { path = "crates/picto-relay-codec" }
-picto-relay-engine = { path = "crates/picto-relay-engine" }
 picto-relay-join = { path = "crates/picto-relay-join" }
 picto-relay-radio = { path = "crates/picto-relay-radio" }
 picto-relay-server = { path = "crates/picto-relay-server" }
-proptest = "1.0"
 pnet = "0.35.0"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
-tokio = { version = "1.0", features = ["fs", "io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1.0", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower-http = { version = "0.6", features = ["trace"] }
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
@@ -40,7 +35,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+warnings = "deny"
 
 [workspace.lints.clippy]
-all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }

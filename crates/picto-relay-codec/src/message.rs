@@ -14,7 +14,6 @@ const TILE_HEIGHT: usize = 8;
 const TILE_BYTES: usize = 32;
 const TILES_PER_ROW: usize = DRAWING_WIDTH / TILE_WIDTH;
 const PIXEL_COUNT: usize = DRAWING_WIDTH * DRAWING_HEIGHT;
-const ONE_BAND_PIXEL_COUNT: usize = DRAWING_WIDTH * TILE_HEIGHT * 2;
 
 /// Encodes a 16- through 80-row, 4bpp native `PictoChat` drawing.
 ///
@@ -68,24 +67,6 @@ pub fn encode_message(sender: MacAddress, pixels: &[u8]) -> Result<Vec<u8>, Deco
         }
     }
     Ok(message)
-}
-
-/// Encodes one sixteen-row, 4bpp native `PictoChat` drawing.
-///
-/// `pixels` contains row-major palette indices for a 256x16 surface. Palette index zero is
-/// transparent/white in observed `PictoChat` drawings; indices 1 through 15 are ink values.
-///
-/// # Errors
-///
-/// Returns [`DecodeError::InvalidMessage`] unless the input is exactly 256x16 pixels and every
-/// palette index fits in four bits.
-pub fn encode_one_band_message(sender: MacAddress, pixels: &[u8]) -> Result<Vec<u8>, DecodeError> {
-    if pixels.len() != ONE_BAND_PIXEL_COUNT {
-        return Err(DecodeError::InvalidMessage(
-            "one-band drawing must contain exactly 4096 pixels",
-        ));
-    }
-    encode_message(sender, pixels)
 }
 
 /// Inclusive bounds of nonzero pixels in a decoded drawing.
@@ -285,13 +266,13 @@ mod tests {
     }
 
     #[test]
-    fn encode_one_band_should_round_trip_sender_and_pixels() {
+    fn encode_message_should_round_trip_one_band_sender_and_pixels() {
         let sender = MacAddress([0x00, 0x16, 0x56, 0x4d, 0x27, 0xca]);
-        let mut pixels = vec![0; ONE_BAND_PIXEL_COUNT];
+        let mut pixels = vec![0; DRAWING_WIDTH * 16];
         pixels[12 * DRAWING_WIDTH + 28] = 3;
         pixels[12 * DRAWING_WIDTH + 29] = 10;
 
-        let bytes = encode_one_band_message(sender, &pixels).expect("drawing should encode");
+        let bytes = encode_message(sender, &pixels).expect("drawing should encode");
         let message = PictoChatMessage::parse(&bytes).expect("drawing should decode");
 
         assert_eq!(message.sender(), sender);
@@ -321,11 +302,11 @@ mod tests {
     }
 
     #[test]
-    fn encode_one_band_should_reject_invalid_input() {
+    fn encode_message_should_reject_invalid_input() {
         let sender = MacAddress([0; 6]);
-        assert!(encode_one_band_message(sender, &[0; 1]).is_err());
-        let mut pixels = vec![0; ONE_BAND_PIXEL_COUNT];
+        assert!(encode_message(sender, &[0; 1]).is_err());
+        let mut pixels = vec![0; DRAWING_WIDTH * 16];
         pixels[0] = 16;
-        assert!(encode_one_band_message(sender, &pixels).is_err());
+        assert!(encode_message(sender, &pixels).is_err());
     }
 }

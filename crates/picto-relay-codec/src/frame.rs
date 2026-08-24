@@ -74,12 +74,6 @@ impl FrameControl {
         self.0 & (1 << 11) != 0
     }
 
-    /// Reports whether the frame has more IEEE 802.11 fragments.
-    #[must_use]
-    pub const fn more_fragments(self) -> bool {
-        self.0 & (1 << 10) != 0
-    }
-
     /// Reports whether the frame travels to the distribution system.
     #[must_use]
     pub const fn to_ds(self) -> bool {
@@ -136,7 +130,6 @@ pub struct MacFrame {
     raw: Vec<u8>,
     header_len: usize,
     body_end: usize,
-    has_fcs: bool,
     /// Decoded header fields.
     pub header: MacHeader,
 }
@@ -225,7 +218,6 @@ impl MacFrame {
             raw: raw.to_vec(),
             header_len,
             body_end,
-            has_fcs,
             header: MacHeader {
                 frame_control,
                 duration,
@@ -248,15 +240,6 @@ impl MacFrame {
     #[must_use]
     pub fn body(&self) -> &[u8] {
         &self.raw[self.header_len..self.body_end]
-    }
-
-    /// Returns the optional captured FCS bytes.
-    #[must_use]
-    pub fn fcs(&self) -> Option<[u8; 4]> {
-        self.has_fcs.then(|| {
-            let bytes = &self.raw[self.body_end..];
-            [bytes[0], bytes[1], bytes[2], bytes[3]]
-        })
     }
 }
 
@@ -281,32 +264,6 @@ pub fn build_data_frame(
         destination,
         source,
         bssid,
-        sequence_number,
-        body,
-    )
-}
-
-/// Builds a To-DS data frame with receiver, transmitter, and logical destination ordering.
-#[must_use]
-pub fn build_data_frame_to_ds(
-    subtype: u8,
-    receiver: MacAddress,
-    source: MacAddress,
-    destination: MacAddress,
-    sequence_number: u16,
-    retry: bool,
-    body: &[u8],
-) -> Vec<u8> {
-    let mut control = (2_u16 << 2) | (u16::from(subtype & 0x0f) << 4) | (1 << 8);
-    if retry {
-        control |= 1 << 11;
-    }
-    build_24_byte_frame(
-        control,
-        0,
-        receiver,
-        source,
-        destination,
         sequence_number,
         body,
     )

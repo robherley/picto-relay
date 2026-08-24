@@ -177,9 +177,9 @@ Merely reassembling the station's own transmitted fragments is not delivery evid
   verifies the 16-byte logical/172-byte physical exception.
 - `golden.rs` verifies both a historical idle Room A beacon and the new two-user
   joined beacon.
-- Property tests exercise arbitrary raw frame inputs and randomized out-of-order
-  fragment reassembly.
-- The engine and scripted broker use the capture-backed envelope, 160-byte fragment
+- Unit tests cover malformed frame boundaries, fragment replacement, and out-of-order
+  reassembly using fixed cases that are easy to inspect and reproduce.
+- The codec and physical worker use the capture-backed envelope, 160-byte fragment
   size, explicit completion marker, To-DS client address layout, and acknowledgement
   command counter.
 

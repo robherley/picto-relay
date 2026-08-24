@@ -17,16 +17,17 @@ pub use frame::{
     BROADCAST, CLIENT_ACK, CLIENT_REPLY, FcsMode, FrameControl, FrameType, HOST_TO_CLIENT,
     MacAddress, MacFrame, MacHeader, SequenceControl, build_association_request,
     build_authentication_request, build_client_reply_frame, build_data_frame,
-    build_data_frame_to_ds, build_management_frame,
+    build_management_frame,
 };
 pub use message::{
     DRAWING_BAND_BYTES, DRAWING_HEIGHT, DRAWING_METADATA_BYTES, DRAWING_WIDTH, PictoChatMessage,
-    PixelBounds, encode_message, encode_one_band_message,
+    PixelBounds, encode_message,
 };
 pub use transport::{
-    MessageReassembler, MultiplayerHeader, NintendoData, NintendoFlow, PictoChatEnvelope,
-    PictoChatFragment, ReassemblyKey, SCRIPTED_FRAGMENT_PAYLOAD, build_ack_frame,
-    build_fragment_frame, decode_nintendo_data, fragment_payload, fragment_payload_starting_at,
+    MESSAGE_FRAGMENT_PAYLOAD_BYTES, MessageReassembler, MultiplayerHeader, NintendoData,
+    NintendoFlow, PictoChatEnvelope, PictoChatFragment, PictoChatProfile, PictoChatRoster,
+    ReassemblyKey, build_ack_frame, build_fragment_frame, decode_nintendo_data,
+    encode_fragment_envelope, fragment_payload, fragment_payload_starting_at,
 };
 
 use thiserror::Error;
@@ -86,6 +87,12 @@ pub enum DecodeError {
     /// A payload offset cannot fit in the observed 16-bit field.
     #[error("fragment offset is too large: {0}")]
     OffsetTooLarge(usize),
+    /// An 84-byte identity record has an invalid marker, subtype, or length.
+    #[error("PictoChat profile is malformed: {0}")]
+    InvalidProfile(&'static str),
+    /// A host member/session record has an invalid length.
+    #[error("PictoChat roster is malformed: {0}")]
+    InvalidRoster(&'static str),
     /// Two fragments claim different data for the same byte range.
     #[error("fragment overlaps previously received data with different contents")]
     ConflictingFragment,

@@ -1,9 +1,9 @@
 # Picto Relay
 
-Picto Relay is a headless Rust service exposing PictoChat send/receive operations
-through a versioned JSON API. The bundled terminal REPL is its primary interactive
-client. The complete hardware-free path uses Nintendo-shaped 802.11 frames through
-the deterministic `ScriptedRadio`.
+Picto Relay is a Rust service exposing PictoChat send/receive operations through a
+small browser interface and versioned JSON API. A deliberately protocol-free in-memory
+backend supports local development; only the AR9271 backend claims Nintendo DS
+interoperability.
 Physical AR9271 testing has verified discovery, authentication, association, SIFS-timed
 membership, both profile passes, and a visibly rendered `PictoRelay` nickname against
 a real DS host. It has also verified outbound drawing delivery: a generated dot rendered
@@ -18,19 +18,17 @@ remaining unknowns. See [docs/packet-shapes.md](docs/packet-shapes.md) for the
 byte-level reference covering every currently observed packet family. See
 [docs/listener.md](docs/listener.md) for tagged live capture on the Raspberry Pi and
 [docs/active-join.md](docs/active-join.md) for the first physical association probe.
-See [docs/json-api.md](docs/json-api.md) for the headless send/receive interface.
+See [docs/json-api.md](docs/json-api.md) for the room and send/receive interface.
 See [docs/progress-notes.md](docs/progress-notes.md) for the chronological engineering
 log, retained evidence, current runtime state, and next work.
 
 Each workspace crate also documents its own boundary and usage:
 
 - [`picto-relay-codec`](crates/picto-relay-codec/README.md)
-- [`picto-relay-engine`](crates/picto-relay-engine/README.md)
 - [`picto-relay-radio`](crates/picto-relay-radio/README.md)
 - [`picto-relay-join`](crates/picto-relay-join/README.md)
 - [`picto-relay-listener`](crates/picto-relay-listener/README.md)
 - [`picto-relay-server`](crates/picto-relay-server/README.md)
-- [`picto-relay-repl`](crates/picto-relay-repl/README.md)
 
 ## Run locally
 
@@ -51,26 +49,10 @@ sudo /home/rob/.local/bin/picto-relay-server \
   --room A
 ```
 
-The JSON API is available at `http://localhost:3001/api/v1`; start with
-`GET /api/v1/status`.
-
-In a second terminal, start the interactive sender/receiver:
-
-```sh
-cargo run -p picto-relay-repl -- --name Terminal
-```
-
-From another machine, point the REPL at the Pi:
-
-```sh
-cargo run -p picto-relay-repl -- \
-  --url http://blueberry.lab.reb.gg:3001/api/v1 \
-  --name Terminal
-```
-
-Type a line to render it into a PictoChat bitmap and send it. The REPL polls for
-incoming messages automatically and prints a compact terminal preview. Enter `/help`
-for drawing, file, status, and session commands.
+Open `http://localhost:3001/`, or `http://blueberry.lab.reb.gg:3001/` when the server
+runs on the Pi. The page lists relay clients in rooms A–D, joins a selected room, and
+sends or receives typed and hand-drawn messages. The JSON API remains available under
+`/api/v1`.
 
 ## Verify
 

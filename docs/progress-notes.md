@@ -233,3 +233,174 @@ Evidence:
 2. Exercise repeated maximum-height messages and receive-side traffic over a longer
    soak session.
 3. Decode the remaining profile metadata and drawing-control fields.
+
+## 2026-08-22
+
+### Runtime-boundary and lint cleanup
+
+- Removed the unused deterministic engine crate. Its room state was only read by its
+  own tests, timer wakeups were discarded by the broker, and its synthetic
+  acknowledgement model did not match physical captures.
+- Replaced the default server backend with an explicit in-memory JSON-contract test
+  double. It loops messages back at the API level and makes no Nintendo protocol or
+  physical-delivery claim. The working AR9271 path remains the only interoperable
+  backend.
+- Converted `picto-relay-join` to a normal library plus a three-line binary entry
+  point. Removed the `#[path = "main.rs"]` module inclusion and blanket dead-code
+  suppression that previously hid unused items.
+- Removed the capture-derived `--experimental-profile` path because it retains the
+  session-deadlock behavior disproven on hardware. Profile initialization now has one
+  supported firmware-assisted implementation.
+- Removed unused codec API (`build_data_frame_to_ds`, `FrameControl::more_fragments`,
+  `MacFrame::fcs`, and `encode_one_band_message`) and consolidated hexadecimal fixture
+  parsing in one test-only source module beside the codec capture fixtures.
+- Promoted Rust warnings plus Clippy `all` and `pedantic` lints to workspace errors.
+  Added GitHub Actions checks for formatting, the full workspace test suite, and the
+  documented strict Clippy command.
+- Verification after the cleanup: 87 tests pass; strict Clippy and formatting checks
+  pass.
+
+## 2026-08-23
+
+### Test and radio-boundary cleanup
+
+- Removed `proptest` and its two randomized codec tests. They were useful while the
+  codec was speculative, but the project now has deterministic capture-backed parser,
+  fragmentation, reassembly, malformed-input, and physical-flow coverage without the
+  additional randomized-test dependency graph.
+- Removed the public `ScriptedRadio`, its matching/masking language, and its
+  script-specific production error variants. Join-flow tests retain a private,
+  exact-frame ordered test double containing only receive, transmit, and completion
+  checks.
+- Removed the server's obsolete `scripted` spelling for the protocol-free `memory`
+  backend and renamed the fragment-size constant to describe the wire format rather
+  than an old test harness.
+- Confirmed that the room BSSID is discovered from beacon Address 2 at runtime and is
+  passed through every live management and data operation. Only Nintendo's logical
+  `03:09:bf:*` multiplayer destinations remain fixed.
+- Removed the zero-BSSID placeholder formerly used while constructing message bodies;
+  the codec can now encode a fragment envelope without manufacturing and discarding
+  an 802.11 header.
+- Verification after this cleanup: 86 tests pass; the full all-targets/all-features
+  strict Clippy command and formatting check pass.
+
+### Browser client and room-aware API
+
+- Replaced the terminal REPL with a framework-free browser client embedded directly
+  in `picto-relay-server`; there is no frontend build step or external asset runtime.
+- Added room selection to session creation and `GET /api/v1/rooms` snapshots for rooms
+  A through D. Memory-backend messages and participant updates are isolated by room.
+- The AR9271 backend remains one physical virtual station at a time, but the browser
+  may select which room that station joins.
+- The page renders incoming packed bitmaps, auto-scrolls received messages, provides a
+  pointer pen/eraser canvas, and converts typed text into the same monochrome bitmap
+  contract.
+- Replaced browser-dependent canvas text with the REPL's exact 5×7 bitmap glyph table
+  and calibrated large/compact wrapping rules. Text is now pixel-identical across
+  browsers, avoids antialiasing, and preserves the top-left nickname exclusion area.
+- Browser checks covered two clients joining Room C, roster propagation, text drawing
+  delivery to both clients, leaving, and a 390-pixel responsive viewport.
+- Verification after the replacement: 82 Rust tests pass; strict Clippy, Rust
+  formatting, JavaScript syntax, and whitespace checks pass.
+- Cross-compiled and deployed the embedded-web server to `blueberry`, then started the
+  AR9271 backend on port 3001. The verified browser URL is
+  `http://blueberry.lab.reb.gg:3001/`; the session capture and log are
+  `/home/rob/picto-relay-captures/20260823-220015-web-ui.{pcap,log}`.
+
+### Physical participant names
+
+- Added typed decoders for the 84-byte `e30` identity record and 104-byte `c34`
+  member/session roster. Nicknames decode from the fixed ten-unit UTF-16LE field and
+  station MACs decode from Nintendo's word-swapped representation. A capture-backed
+  Japanese-name fixture verifies that trailing U+3000 padding is removed alongside
+  the U+0000 padding used by ASCII profiles.
+- The live worker now joins profile names to the sixteen roster slots, emits complete
+  participant snapshots, removes client-originated reason-3 deauthentications, and
+  resolves incoming drawing senders through the same nickname table.
+- The live room endpoint and browser participant list now show physical DS clients for
+  the actively joined room. Unobserved profiles retain a stable `DS <mac>` fallback;
+  the other three rooms remain unknown while the single virtual station is joined.
+- Cross-compiled and deployed the implementation to `blueberry`. A live Room A API
+  join resolved host `00:24:f3:67:41:87` to nickname `reb`, retained virtual nickname
+  `Relay`, and exposed both through the participant event and `GET /api/v1/rooms`.
+  The verification capture and log are
+  `/home/rob/picto-relay-captures/20260823-223821-physical-roster.{pcap,log}`.
+- Final verification: 89 Rust tests pass; strict Clippy, Rust formatting, JavaScript
+  syntax, and whitespace checks pass.
+
+### WebSocket browser transport
+
+- Replaced the browser's 1-second room refresh and 500-millisecond session-event
+  polling timers with pushed WebSocket streams. Room subscribers receive a complete
+  snapshot immediately and after roster changes; session subscribers receive one
+  versioned event envelope per text frame.
+- Kept `GET /api/v1/rooms` and `GET /api/v1/sessions/:id/events` intact for scripts
+  and existing clients. A connected session WebSocket exclusively owns that session's
+  bounded receiver; disconnecting restores it so reconnect or REST polling can resume.
+- Added a broker `watch` channel so roster delivery is driven by state changes rather
+  than per-browser request traffic, plus coverage for snapshot publication and a
+  browser regression check that rejects polling intervals.
+- Local verification: all 91 workspace tests pass, Rust formatting is clean, and the
+  embedded JavaScript passes `node --check`.
+- Cross-compiled and deployed the gateway to `blueberry`. The live AR9271 server
+  immediately returned a four-room snapshot over `/api/v1/rooms/ws`, and the deployed
+  browser asset contains both WebSocket clients with no `setInterval` polling loop.
+  The running capture and log are
+  `/home/rob/picto-relay-captures/20260823-230100-websocket-ui.{pcap,log}`.
+
+### Participant lifecycle events
+
+- Added versioned `participant_joined` and `participant_left` session events. Each
+  carries the room plus the participant's stable ID and last-known nickname; both the
+  WebSocket stream and retained REST polling endpoint expose the same envelopes.
+- The memory broker publishes lifecycle deltas to all remaining members of the room.
+  The physical broker compares successive host rosters by station-derived ID, so a
+  newly decoded nickname does not create a false leave/rejoin pair.
+- The first physical roster is treated as a baseline for users who were already in the
+  room. The relay announces its own join only after the profile handshake reaches the
+  ready state; subsequent physical additions and removals are emitted explicitly.
+- The browser renders joined and left notices in the auto-scrolling message timeline
+  while continuing to replace its client list from authoritative roster snapshots.
+- A local two-client WebSocket scenario observed Alice joining, Bob joining, and Bob
+  leaving with the expected room and participant objects. All 94 workspace tests and
+  strict Clippy pass; JavaScript syntax and repository whitespace checks are clean.
+- Cross-compiled and deployed the lifecycle build to `blueberry`; the AR9271 gateway
+  is running on port 3001 and serves both lifecycle handlers. Its capture and log are
+  `/home/rob/picto-relay-captures/20260823-231500-participant-lifecycle.{pcap,log}`.
+
+### Test helper package removal
+
+- Removed the `picto-relay-test-support` workspace package and all three dev-dependency
+  edges that existed solely for one hexadecimal fixture decoder.
+- Kept one test-only decoder source beside the codec capture fixtures. Codec integration
+  tests include it normally; join and listener tests include the same source by path,
+  avoiding both production API and copy-pasted implementations.
+- Regenerated `Cargo.lock`; Cargo metadata contains only the five runtime crates. All
+  93 remaining workspace tests pass.
+
+### Live room counts
+
+- Added a singular/plural client count to every room-card heading. Counts and nickname
+  lists are rendered from the same complete room snapshot, so WebSocket join/leave and
+  physical-roster updates change them together without polling.
+- Deployed the embedded asset to `blueberry`; the running capture and log are
+  `/home/rob/picto-relay-captures/20260824-004500-room-counts.{pcap,log}`.
+
+### Passive physical room counts
+
+- Corrected the live lobby semantics: the broker previously published only the
+  detailed roster learned after the relay itself joined, so a DS-only room could not
+  update the lobby.
+- Added a read-only AR9271 observer that decodes Nintendo room beacons continuously,
+  reports A-through-D user counts, and expires hosts after two seconds without a
+  beacon. Adapter preparation now happens once at server startup so the observer and
+  active session share the monitor interface without either recreating it.
+- Added `participant_count` to room REST and WebSocket snapshots. Detailed
+  `participants` remain empty until profiles are known, avoiding invented identities.
+- Added observer expiry/aggregation tests, broker/API count tests, and updated the
+  embedded lobby to distinguish detected physical clients from named roster members.
+  All 98 workspace tests and strict Clippy pass.
+- Deployed and restarted `blueberry`. Live verification showed the REST snapshot and
+  browser WebSocket update converge on `Room A · 1 client` while one real DS was in the
+  room. The current capture and log are
+  `/home/rob/picto-relay-captures/20260823-passive-room-counts.{pcap,log}`.

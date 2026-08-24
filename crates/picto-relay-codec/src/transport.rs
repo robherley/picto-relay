@@ -5,8 +5,13 @@ use crate::{
     SequenceControl, build_client_reply_frame, build_data_frame, read_u16, too_short,
 };
 
-/// Message data carried by each observed `PictoChat` fragment.
-pub const SCRIPTED_FRAGMENT_PAYLOAD: usize = 160;
+/// Maximum message data carried by each observed non-final `PictoChat` fragment.
+pub const MESSAGE_FRAGMENT_PAYLOAD_BYTES: usize = 160;
+/// Bytes in one identity/profile record carried by an `e30` fragment.
+pub const PROFILE_BYTES: usize = 84;
+/// Participant slots carried by one host `c34` member/session record.
+pub const ROSTER_SLOTS: usize = 16;
+const ROSTER_BYTES: usize = 4 + ROSTER_SLOTS * 6 + 4;
 
 /// Direction/role inferred from Nintendo's three multiplayer destination addresses.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -163,6 +168,96 @@ impl PictoChatEnvelope {
     }
 }
 
+/// Identity advertised by one `PictoChat` participant.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PictoChatProfile {
+    /// Identity pass (`0` for the initial pass and `1` for the final pass).
+    pub subtype: u8,
+    /// Station address encoded as three little-endian words on the wire.
+    pub station: MacAddress,
+    /// Fixed-width, null-terminated UTF-16LE nickname.
+    pub nickname: String,
+}
+
+impl PictoChatProfile {
+    /// Parses one 84-byte identity/profile record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecodeError::InvalidProfile`] when the record length, marker, or
+    /// identity subtype does not match the capture-backed layout.
+    pub fn parse(record: &[u8]) -> Result<Self, DecodeError> {
+        if record.len() != PROFILE_BYTES {
+            return Err(DecodeError::InvalidProfile(
+                "identity record must contain exactly 84 bytes",
+            ));
+        }
+        if record[0] != 3 {
+            return Err(DecodeError::InvalidProfile(
+                "identity record marker is not 3",
+            ));
+        }
+        let subtype = record[1];
+        if subtype > 1 {
+            return Err(DecodeError::InvalidProfile(
+                "identity subtype is not 0 or 1",
+            ));
+        }
+        let station = decode_word_swapped_mac(&record[2..8]);
+        let mut nickname_units = record[8..28]
+            .chunks_exact(2)
+            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+            .collect::<Vec<_>>();
+        if let Some(terminator) = nickname_units.iter().position(|&unit| unit == 0) {
+            nickname_units.truncate(terminator);
+        }
+        while nickname_units.last() == Some(&0x3000) {
+            nickname_units.pop();
+        }
+        Ok(Self {
+            subtype,
+            station,
+            nickname: String::from_utf16_lossy(&nickname_units),
+        })
+    }
+}
+
+/// Slot-to-station mapping carried by a host `c34` member/session record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PictoChatRoster {
+    /// Slots zero through fifteen; an all-zero MAC marks an unused slot.
+    pub members: [Option<MacAddress>; ROSTER_SLOTS],
+}
+
+impl PictoChatRoster {
+    /// Parses the 104-byte host roster payload inside a `c34` envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecodeError::InvalidRoster`] when the payload does not have the
+    /// capture-backed fixed length.
+    pub fn parse(payload: &[u8]) -> Result<Self, DecodeError> {
+        if payload.len() != ROSTER_BYTES {
+            return Err(DecodeError::InvalidRoster(
+                "member/session payload must contain exactly 104 bytes",
+            ));
+        }
+        let mut members = [None; ROSTER_SLOTS];
+        for (slot, encoded) in payload[4..4 + ROSTER_SLOTS * 6].chunks_exact(6).enumerate() {
+            if encoded.iter().any(|&byte| byte != 0) {
+                members[slot] = Some(decode_word_swapped_mac(encoded));
+            }
+        }
+        Ok(Self { members })
+    }
+}
+
+fn decode_word_swapped_mac(encoded: &[u8]) -> MacAddress {
+    MacAddress([
+        encoded[1], encoded[0], encoded[3], encoded[2], encoded[5], encoded[4],
+    ])
+}
+
 /// Capture-backed `PictoChat` message fragment.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PictoChatFragment {
@@ -304,7 +399,7 @@ pub struct MessageReassembler {
 
 impl Default for MessageReassembler {
     fn default() -> Self {
-        Self::new(SCRIPTED_FRAGMENT_PAYLOAD)
+        Self::new(MESSAGE_FRAGMENT_PAYLOAD_BYTES)
     }
 }
 
@@ -552,20 +647,7 @@ pub fn build_fragment_frame(
     retry: bool,
     fragment: &PictoChatFragment,
 ) -> Result<Vec<u8>, DecodeError> {
-    if flow == NintendoFlow::HostAcknowledgement {
-        return Err(DecodeError::InvalidFragment(
-            "use build_ack_frame for host acknowledgements",
-        ));
-    }
-    let fragment_payload = fragment.encode_for_flow(flow)?;
-    let packet_id = transfer_packet_id(flow, fragment_payload.len())?;
-    let envelope = PictoChatEnvelope {
-        packet_id,
-        packet_sequence: 2,
-        declared_length: 0,
-        payload: fragment_payload,
-    }
-    .encode(flow)?;
+    let envelope = encode_fragment_envelope(flow, fragment)?;
     match flow {
         NintendoFlow::HostToClient => {
             let mut body = Vec::with_capacity(4 + envelope.len());
@@ -591,6 +673,36 @@ pub fn build_fragment_frame(
         }
         NintendoFlow::HostAcknowledgement => unreachable!(),
     }
+}
+
+/// Encodes a fragment into its direction-specific `PictoChat` envelope.
+///
+/// Unlike [`build_fragment_frame`], this function does not construct an IEEE 802.11
+/// header and therefore does not require a host BSSID.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] when the fragment or envelope cannot be encoded, or when
+/// called for a host acknowledgement flow.
+pub fn encode_fragment_envelope(
+    flow: NintendoFlow,
+    fragment: &PictoChatFragment,
+) -> Result<Vec<u8>, DecodeError> {
+    if flow == NintendoFlow::HostAcknowledgement {
+        return Err(DecodeError::InvalidFragment(
+            "use build_ack_frame for host acknowledgements",
+        ));
+    }
+    let fragment_payload = fragment.encode_for_flow(flow)?;
+    let packet_id = transfer_packet_id(flow, fragment_payload.len())?;
+    let envelope = PictoChatEnvelope {
+        packet_id,
+        packet_sequence: 2,
+        declared_length: 0,
+        payload: fragment_payload,
+    }
+    .encode(flow)?;
+    Ok(envelope)
 }
 
 fn transfer_packet_id(flow: NintendoFlow, wire_payload_length: usize) -> Result<u16, DecodeError> {
@@ -660,6 +772,57 @@ mod tests {
             payload: Vec::new(),
         };
         assert!(envelope.is_message_fragment());
+    }
+
+    #[test]
+    fn profile_should_decode_word_swapped_mac_and_utf16_nickname() {
+        let mut record = [0_u8; PROFILE_BYTES];
+        record[..8].copy_from_slice(&[3, 1, 0x24, 0, 0x67, 0xf3, 0x87, 0x41]);
+        for (target, unit) in record[8..28].chunks_exact_mut(2).zip("Rób".encode_utf16()) {
+            target.copy_from_slice(&unit.to_le_bytes());
+        }
+
+        let profile = PictoChatProfile::parse(&record).expect("profile should decode");
+
+        assert_eq!(
+            (profile.station, profile.nickname, profile.subtype),
+            (
+                MacAddress([0, 0x24, 0xf3, 0x67, 0x41, 0x87]),
+                "Rób".into(),
+                1,
+            )
+        );
+    }
+
+    #[test]
+    fn roster_should_decode_captured_slot_layout() {
+        let mut payload = [0_u8; ROSTER_BYTES];
+        payload[4..16].copy_from_slice(&[
+            0x24, 0, 0x67, 0xf3, 0x87, 0x41, 0x25, 0, 0xdc, 0xa0, 0xdf, 0x81,
+        ]);
+
+        let roster = PictoChatRoster::parse(&payload).expect("roster should decode");
+
+        assert_eq!(
+            &roster.members[..3],
+            &[
+                Some(MacAddress([0, 0x24, 0xf3, 0x67, 0x41, 0x87])),
+                Some(MacAddress([0, 0x25, 0xa0, 0xdc, 0x81, 0xdf])),
+                None,
+            ]
+        );
+    }
+
+    #[test]
+    fn profile_should_reject_an_unknown_record_marker() {
+        let record = [0_u8; PROFILE_BYTES];
+
+        let error = PictoChatProfile::parse(&record).expect_err("marker should be required");
+
+        assert_eq!(
+            error,
+            DecodeError::InvalidProfile("identity record marker is not 3")
+        );
     }
 
     #[test]

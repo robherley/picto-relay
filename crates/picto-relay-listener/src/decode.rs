@@ -1,10 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use picto_relay_codec::{
-    BROADCAST, FcsMode, MacAddress, MacFrame, ManagementBody, MessageReassembler,
-    MultiplayerHeader, NintendoBeacon, NintendoFlow, PictoChatEnvelope, PictoChatFragment,
-    PictoChatMessage, ReassemblyKey, SCRIPTED_FRAGMENT_PAYLOAD, decode_nintendo_data,
-    parse_management,
+    BROADCAST, FcsMode, MESSAGE_FRAGMENT_PAYLOAD_BYTES, MacAddress, MacFrame, ManagementBody,
+    MessageReassembler, MultiplayerHeader, NintendoBeacon, NintendoFlow, PictoChatEnvelope,
+    PictoChatFragment, PictoChatMessage, ReassemblyKey, decode_nintendo_data, parse_management,
 };
 use serde::Serialize;
 
@@ -53,7 +52,7 @@ impl Decoder {
             seen_families: BTreeSet::new(),
             seen_failure_masks: BTreeSet::new(),
             departed: BTreeSet::new(),
-            reassembler: MessageReassembler::new(SCRIPTED_FRAGMENT_PAYLOAD),
+            reassembler: MessageReassembler::new(MESSAGE_FRAGMENT_PAYLOAD_BYTES),
             summary: DecodeSummary::default(),
         }
     }
@@ -478,26 +477,17 @@ fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
 }
 
 #[cfg(test)]
+#[path = "../../picto-relay-codec/tests/support/mod.rs"]
+mod test_support;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    fn decode_hex(text: &str) -> Vec<u8> {
-        let compact = text.trim();
-        compact
-            .as_bytes()
-            .chunks_exact(2)
-            .map(|pair| {
-                u8::from_str_radix(
-                    std::str::from_utf8(pair).expect("fixture must be ASCII"),
-                    16,
-                )
-                .expect("fixture must contain hex")
-            })
-            .collect()
-    }
+    use super::test_support::decode_hex;
 
     fn fixture(name: &str) -> Vec<u8> {
-        let compact = match name {
+        let text = match name {
             "room-a" => include_str!("../../picto-relay-codec/tests/fixtures/room-refresh-a.hex"),
             "room-b" => include_str!("../../picto-relay-codec/tests/fixtures/room-refresh-b.hex"),
             "broadcast-deauth" => {
@@ -507,19 +497,8 @@ mod tests {
                 include_str!("../../picto-relay-codec/tests/fixtures/client-leave-deauth.hex")
             }
             _ => panic!("unknown fixture {name}"),
-        }
-        .trim();
-        compact
-            .as_bytes()
-            .chunks_exact(2)
-            .map(|pair| {
-                u8::from_str_radix(
-                    std::str::from_utf8(pair).expect("fixture must be ASCII"),
-                    16,
-                )
-                .expect("fixture must contain hex")
-            })
-            .collect()
+        };
+        decode_hex(text)
     }
 
     #[test]

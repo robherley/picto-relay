@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Picto Relay</title>
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <strong>Picto Relay</strong>
+      <span id="gateway-status">Connecting…</span>
+    </header>
+
+    <main>
+      <section id="lobby" aria-labelledby="lobby-title">
+        <div class="section-heading">
+          <h1 id="lobby-title">Rooms</h1>
+          <label>Name <input id="name" maxlength="10" value="Relay" autocomplete="nickname"></label>
+        </div>
+        <div id="rooms" class="rooms" aria-live="polite"></div>
+        <p class="hint">Counts include nearby DS clients. Names appear after the relay joins.</p>
+      </section>
+
+      <section id="chat" hidden aria-labelledby="chat-title">
+        <div class="section-heading">
+          <div>
+            <h1 id="chat-title">Room A</h1>
+            <p id="session-status" class="status">Joining…</p>
+          </div>
+          <button id="leave" type="button">Leave room</button>
+        </div>
+
+        <div class="chat-layout">
+          <aside>
+            <h2>Clients</h2>
+            <ul id="participants"></ul>
+          </aside>
+
+          <div class="chat-main">
+            <div id="messages" class="messages" aria-live="polite"></div>
+
+            <div class="composer">
+              <canvas id="drawing" width="256" height="96" aria-label="Message drawing area"></canvas>
+              <div class="tools">
+                <button id="pen" class="selected" type="button">Pen</button>
+                <button id="eraser" type="button">Eraser</button>
+                <button id="clear" type="button">Clear</button>
+                <button id="send-drawing" type="button">Send drawing</button>
+              </div>
+              <form id="text-form">
+                <input id="text" maxlength="220" placeholder="Type a message" autocomplete="off">
+                <button type="submit">Send text</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

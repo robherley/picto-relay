@@ -45,9 +45,9 @@ invisible virtual client after the process exits normally.
 
 The 84-byte virtual profile contains the selected station MAC and `--name` (default
 `PictoRelay`). Several non-semantic transfer bytes are still capture-derived, but the
-participant slot and station identity are generated for the active session. The older
-`--experimental-profile` option retains the userspace-timed diagnostic path; it is not
-needed when using firmware assist.
+participant slot and station identity are generated for the active session. The
+capture-derived userspace profile experiment was removed after hardware testing proved
+that it deadlocks the session; identity exchange requires the firmware-assisted path.
 
 ## Deploy
 

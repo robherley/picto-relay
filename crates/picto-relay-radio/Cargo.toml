@@ -1,6 +1,6 @@
 [package]
 name = "picto-relay-radio"
-description = "Radio abstraction and scripted backend for Picto Relay"
+description = "Raw-radio abstraction and Linux monitor backend for Picto Relay"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

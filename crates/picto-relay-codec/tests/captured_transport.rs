@@ -1,27 +1,12 @@
 use picto_relay_codec::{
     FcsMode, MacAddress, MacFrame, MessageReassembler, MultiplayerHeader, NintendoFlow,
-    PictoChatEnvelope, PictoChatFragment, PictoChatMessage, ReassemblyKey,
+    PictoChatEnvelope, PictoChatFragment, PictoChatMessage, PictoChatProfile, ReassemblyKey,
     build_association_request, build_authentication_request, build_client_reply_frame,
     build_fragment_frame, decode_nintendo_data,
 };
+mod support;
 
-fn decode_hex(text: &str) -> Vec<u8> {
-    let compact = text
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>();
-    compact
-        .as_bytes()
-        .chunks_exact(2)
-        .map(|pair| {
-            u8::from_str_radix(
-                std::str::from_utf8(pair).expect("fixture must be ASCII"),
-                16,
-            )
-            .expect("fixture must contain valid hex")
-        })
-        .collect()
-}
+use support::decode_hex;
 
 fn decode_data(hex: &str) -> (picto_relay_codec::NintendoData, PictoChatEnvelope) {
     let bytes = decode_hex(hex);
@@ -126,6 +111,25 @@ fn captured_host_rebroadcast_should_decode_multiplayer_prefix_and_trailer() {
     assert_eq!(fragment.data.len(), 160);
     assert_eq!(fragment.frame_number, 6);
     assert_eq!(fragment.host_trailer, Some(2));
+}
+
+#[test]
+fn captured_profile_should_trim_full_width_nickname_padding() {
+    let bytes = decode_hex(include_str!("fixtures/host-client-profile-envelope.hex"));
+    let envelope = PictoChatEnvelope::parse(NintendoFlow::HostToClient, &bytes)
+        .expect("captured profile envelope should parse");
+    let fragment = PictoChatFragment::parse(&envelope.payload, NintendoFlow::HostToClient)
+        .expect("captured profile fragment should parse");
+
+    let profile = PictoChatProfile::parse(&fragment.data).expect("captured profile should parse");
+
+    assert_eq!(
+        (profile.station, profile.nickname),
+        (
+            MacAddress([0, 0x25, 0xa0, 0xdc, 0x81, 0xdf]),
+            "ちふみ".into(),
+        )
+    );
 }
 
 #[test]

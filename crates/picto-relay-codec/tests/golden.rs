@@ -1,24 +1,9 @@
 use picto_relay_codec::{
     FcsMode, MacAddress, MacFrame, ManagementBody, NintendoBeacon, parse_management,
 };
+mod support;
 
-fn decode_hex(text: &str) -> Vec<u8> {
-    let compact = text
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>();
-    compact
-        .as_bytes()
-        .chunks_exact(2)
-        .map(|pair| {
-            u8::from_str_radix(
-                std::str::from_utf8(pair).expect("fixture must be ASCII"),
-                16,
-            )
-            .expect("fixture must contain valid hex")
-        })
-        .collect()
-}
+use support::decode_hex;
 
 #[test]
 fn captured_room_a_beacon_should_decode_and_round_trip_losslessly() {

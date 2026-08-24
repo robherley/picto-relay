@@ -13,13 +13,14 @@ remain opaque so decoded packets can round-trip without losing evidence.
 - Parse and serialize 802.11 management and data frames.
 - Decode Nintendo beacon, authentication, association, and multiplayer structures.
 - Decode and construct PictoChat envelopes and message fragments.
+- Decode `c34` participant-slot rosters and `e30` UTF-16LE identity profiles.
 - Reassemble captured client and host message streams.
-- Encode one drawing band into the native PictoChat message layout.
+- Encode one to five drawing bands into the native PictoChat message layout.
 - Preserve unknown fields and optional frame check sequences losslessly.
 
 This crate does not open wireless interfaces, schedule transmissions, or manage
-participants. Those responsibilities belong to `picto-relay-radio` and
-`picto-relay-engine`.
+participants. Those responsibilities belong to `picto-relay-radio` and the physical
+session worker in `picto-relay-join`.
 
 ## Verify
 

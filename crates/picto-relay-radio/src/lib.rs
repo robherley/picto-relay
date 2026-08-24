@@ -1,7 +1,6 @@
-//! Radio boundary and strict scripted Nintendo `PictoChat` development backend for Picto Relay.
+//! Blocking raw-radio boundary and Linux monitor backend for Picto Relay.
 
 use std::{
-    collections::VecDeque,
     fs::File,
     io::{self, BufWriter, Write},
     path::Path,
@@ -50,96 +49,12 @@ pub struct TransmitFrame {
     pub bytes: Vec<u8>,
 }
 
-/// A mask-aware expected transmission in a radio script.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ExpectedFrame {
-    bytes: Vec<u8>,
-    mask: Vec<u8>,
-}
-
-impl ExpectedFrame {
-    /// Creates an exact frame expectation.
-    #[must_use]
-    pub fn exact(bytes: Vec<u8>) -> Self {
-        let mask = vec![u8::MAX; bytes.len()];
-        Self { bytes, mask }
-    }
-
-    /// Creates an expectation with a byte mask.
-    ///
-    /// A set mask bit is compared and a cleared bit is ignored.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RadioError::InvalidMaskLength`] when lengths differ.
-    pub fn masked(bytes: Vec<u8>, mask: Vec<u8>) -> Result<Self, RadioError> {
-        if bytes.len() != mask.len() {
-            return Err(RadioError::InvalidMaskLength {
-                frame: bytes.len(),
-                mask: mask.len(),
-            });
-        }
-        Ok(Self { bytes, mask })
-    }
-
-    fn matches(&self, actual: &[u8]) -> bool {
-        self.bytes.len() == actual.len()
-            && self
-                .bytes
-                .iter()
-                .zip(actual)
-                .zip(&self.mask)
-                .all(|((&expected, &actual), &mask)| expected & mask == actual & mask)
-    }
-}
-
-/// One ordered action in a deterministic radio script.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ScriptStep {
-    /// Make a frame available to `receive` no earlier than `at`.
-    Receive {
-        /// Absolute monotonic time for this test script.
-        at: Instant,
-        /// Frame returned to the engine.
-        frame: ReceivedFrame,
-    },
-    /// Require the engine to transmit a matching frame next.
-    ExpectTransmit(ExpectedFrame),
-}
-
-/// Errors produced by a radio backend or strict radio script.
+/// Errors produced by a radio backend.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum RadioError {
     /// A radio channel outside the 2.4 GHz range was requested.
     #[error("unsupported 2.4 GHz channel {0}")]
     InvalidChannel(u8),
-    /// A masked expectation has incompatible byte and mask lengths.
-    #[error("frame and mask lengths differ: frame={frame}, mask={mask}")]
-    InvalidMaskLength {
-        /// Expected frame length.
-        frame: usize,
-        /// Mask length.
-        mask: usize,
-    },
-    /// Transmission occurred when the next script step was not a transmission.
-    #[error("unexpected transmission of {actual:?}; next step is {next}")]
-    UnexpectedTransmission {
-        /// Bytes the engine attempted to send.
-        actual: Vec<u8>,
-        /// Description of the pending step.
-        next: &'static str,
-    },
-    /// A transmission did not satisfy its expected bytes and mask.
-    #[error("transmission mismatch: expected {expected:?}, received {actual:?}")]
-    TransmissionMismatch {
-        /// Expected bytes before masking.
-        expected: Vec<u8>,
-        /// Actual transmitted bytes.
-        actual: Vec<u8>,
-    },
-    /// A script ended with unconsumed steps.
-    #[error("radio script has {0} unconsumed step(s)")]
-    UnconsumedSteps(usize),
     /// The requested monitor interface does not exist.
     #[error("monitor interface {0} was not found")]
     InterfaceNotFound(String),
@@ -500,123 +415,6 @@ fn read_radiotap_u32(
         .filter(|_| offset + 4 <= header_length)
         .ok_or_else(|| RadioError::Receive("truncated radiotap bitmap".into()))?;
     Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-}
-
-/// A strict, ordered radio implementation for development and tests.
-#[derive(Debug)]
-pub struct ScriptedRadio {
-    steps: VecDeque<ScriptStep>,
-    transmitted: Vec<TransmitFrame>,
-    configured_channel: Option<u8>,
-    recording: bool,
-}
-
-impl ScriptedRadio {
-    /// Creates a radio from an ordered script.
-    #[must_use]
-    pub fn new(steps: impl IntoIterator<Item = ScriptStep>) -> Self {
-        Self {
-            steps: steps.into_iter().collect(),
-            transmitted: Vec::new(),
-            configured_channel: None,
-            recording: false,
-        }
-    }
-
-    /// Creates an interactive script that records every transmission.
-    ///
-    /// Received frames can be added with [`Self::inject`]. This is the sole
-    /// development backend used by the headless product loop.
-    #[must_use]
-    pub fn recording() -> Self {
-        Self {
-            steps: VecDeque::new(),
-            transmitted: Vec::new(),
-            configured_channel: None,
-            recording: true,
-        }
-    }
-
-    /// Adds a received frame to an interactive recording script.
-    pub fn inject(&mut self, frame: ReceivedFrame) {
-        self.steps.push_back(ScriptStep::Receive {
-            at: frame.received_at,
-            frame,
-        });
-    }
-
-    /// Drains frames captured by an interactive recording script.
-    pub fn take_transmissions(&mut self) -> Vec<TransmitFrame> {
-        std::mem::take(&mut self.transmitted)
-    }
-
-    /// Returns the configured channel, if configuration has occurred.
-    #[must_use]
-    pub const fn configured_channel(&self) -> Option<u8> {
-        self.configured_channel
-    }
-
-    /// Confirms every scripted step was consumed.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RadioError::UnconsumedSteps`] when actions remain.
-    pub fn finish(self) -> Result<(), RadioError> {
-        if self.steps.is_empty() {
-            Ok(())
-        } else {
-            Err(RadioError::UnconsumedSteps(self.steps.len()))
-        }
-    }
-}
-
-impl RadioBackend for ScriptedRadio {
-    fn configure(&mut self, config: RadioConfig) -> Result<(), RadioError> {
-        validate_channel(config.channel)?;
-        self.configured_channel = Some(config.channel);
-        Ok(())
-    }
-
-    fn receive(&mut self, deadline: Instant) -> Result<Option<ReceivedFrame>, RadioError> {
-        let Some(ScriptStep::Receive { at, .. }) = self.steps.front() else {
-            return Ok(None);
-        };
-        if *at > deadline {
-            return Ok(None);
-        }
-        let Some(ScriptStep::Receive { frame, .. }) = self.steps.pop_front() else {
-            return Ok(None);
-        };
-        Ok(Some(frame))
-    }
-
-    fn transmit(&mut self, frame: TransmitFrame) -> Result<(), RadioError> {
-        if self.recording {
-            self.transmitted.push(frame);
-            return Ok(());
-        }
-        let Some(step) = self.steps.pop_front() else {
-            return Err(RadioError::UnexpectedTransmission {
-                actual: frame.bytes,
-                next: "end of script",
-            });
-        };
-        let ScriptStep::ExpectTransmit(expected) = step else {
-            self.steps.push_front(step);
-            return Err(RadioError::UnexpectedTransmission {
-                actual: frame.bytes,
-                next: "receive",
-            });
-        };
-        if expected.matches(&frame.bytes) {
-            Ok(())
-        } else {
-            Err(RadioError::TransmissionMismatch {
-                expected: expected.bytes,
-                actual: frame.bytes,
-            })
-        }
-    }
 }
 
 #[cfg(test)]

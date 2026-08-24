@@ -15,7 +15,7 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") [--host USER@HOST] [--destination PATH] [--target TRIPLE]
 
-Cross-compile and deploy the Picto Relay JSON server and REPL to the Pi.
+Cross-compile and deploy the Picto Relay JSON and web server to the Pi.
 
 Options:
   --host VALUE        SSH destination (default: ${DEFAULT_HOST}).
@@ -75,23 +75,20 @@ command -v ssh >/dev/null 2>&1 || {
   exit 2
 }
 
-printf 'Building gateway and REPL for %s\n' "$target"
+printf 'Building gateway for %s\n' "$target"
 cargo zigbuild \
   --manifest-path "${PROJECT_ROOT}/Cargo.toml" \
   --release \
   --locked \
   --target "$target" \
-  --package picto-relay-server \
-  --package picto-relay-repl
+  --package picto-relay-server
 
 readonly release_dir="${PROJECT_ROOT}/target/${target}/release"
 readonly server="${release_dir}/picto-relay-server"
-readonly repl="${release_dir}/picto-relay-repl"
 
 ssh -- "$host" "mkdir -p -- '$bin_dir'"
 rsync --archive --compress --human-readable --itemize-changes -- \
-  "$server" "$repl" "$host:$bin_dir/"
-ssh -- "$host" \
-  "chmod 0755 -- '$bin_dir/picto-relay-server' '$bin_dir/picto-relay-repl'"
+  "$server" "$host:$bin_dir/"
+ssh -- "$host" "chmod 0755 -- '$bin_dir/picto-relay-server'"
 
-printf 'Deployed gateway and REPL to %s:%s\n' "$host" "$bin_dir"
+printf 'Deployed gateway to %s:%s\n' "$host" "$bin_dir"
