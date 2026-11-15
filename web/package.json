@@ -1,0 +1,28 @@
+{
+  "name": "picto-relay-web",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "generate": "openapi-ts",
+    "dev": "npm run generate && vite",
+    "build": "npm run generate && tsc --noEmit && vite build",
+    "test": "npm run generate && tsc --noEmit && vitest run"
+  },
+  "dependencies": {
+    "@spiritov/ds.css": "^2.7.4",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "^0.99.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  }
+}

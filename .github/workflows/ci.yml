@@ -16,18 +16,26 @@ jobs:
         with:
           components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
+
+      # The server embeds the web client, so build it before compiling.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Test and build the web client
+        working-directory: web
+        run: |
+          npm ci
+          npm test
+          npm run build
+
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run tests
         run: cargo test --workspace --all-features --locked
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Test browser drawing tools
-        run: node --test crates/picto-relay-server/tests/drawing.test.cjs
 
       - name: Test firmware protocol (host C build)
         working-directory: firmware/esp32

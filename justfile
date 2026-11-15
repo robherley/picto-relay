@@ -25,21 +25,33 @@ default:
     @just --list
 
 # Run the web/REST server with the connected ESP32.
-server:
+server: web-build
     cargo run --locked -p picto-relay-server -- --backend esp32 --serial "$PICTO_SERIAL_PORT"
 
 # Run the server and record every radio frame the ESP32 hears to capture.pcap.
-server-capture file="capture.pcap":
+server-capture file="capture.pcap": web-build
     cargo run --locked -p picto-relay-server -- --backend esp32 --serial "$PICTO_SERIAL_PORT" --capture "{{file}}"
 
 # Run the web/REST server without hardware.
-server-memory:
+server-memory: web-build
     cargo run --locked -p picto-relay-server -- --backend memory
 
+# Build the web client into web/dist, which the server embeds when it compiles.
+web-build: _web-deps
+    npm --prefix web run build
+
+# Run the web client with hot reload; needs a server running (`just server-memory`).
+web-dev: _web-deps
+    npm --prefix web run dev
+
+# Install the web client's dependencies when package-lock.json has changed.
+_web-deps:
+    @[ web/node_modules/.package-lock.json -nt web/package-lock.json ] || npm --prefix web ci --no-audit --no-fund
+
 # Run every test that needs no hardware.
-test: firmware-test
+test: firmware-test web-build
+    npm --prefix web test
     cargo test --workspace --locked
-    node --test crates/picto-relay-server/tests/drawing.test.cjs
 
 # Regenerate the firmware's protocol header and shared test fixtures from the Rust crates.
 protocol-header:

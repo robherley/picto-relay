@@ -9,8 +9,8 @@ use axum::{
         Path as AxumPath, State,
         ws::{Message as WebSocketMessage, WebSocket, WebSocketUpgrade},
     },
-    http::{StatusCode, header},
-    response::{Html, IntoResponse},
+    http::{StatusCode, Uri, header},
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -46,6 +46,32 @@ const DEFAULT_LOG_FILTER: &str = "info";
 
 /// Maximum number of events returned by one polling request.
 const MAX_EVENTS_PER_POLL: usize = 32;
+
+// --- Web client ------------------------------------------------------------------
+
+/// The browser client. It is built separately (`just web-build` writes
+/// `web/dist`) and embedded here at compile time. `allow_missing` lets the
+/// server compile without it, in which case it says how to build the client.
+#[derive(rust_embed::RustEmbed)]
+#[folder = "../../web/dist"]
+#[allow_missing = true]
+struct WebClient;
+
+/// File served for the root path.
+const WEB_INDEX: &str = "index.html";
+
+/// Directory whose files the client's bundler names by a hash of their content.
+const WEB_HASHED_PREFIX: &str = "assets/";
+
+/// Caching for files named by content hash: they never change.
+const CACHE_FOREVER: &str = "public, max-age=31536000, immutable";
+
+/// Caching for everything else: check with the server before reuse.
+const CACHE_REVALIDATE: &str = "no-cache";
+
+/// Response body when the server was compiled before the web client was built.
+const WEB_CLIENT_MISSING: &str = "The web client has not been built. Run `just web-build` and \
+    restart the server. The JSON API under /api/v1 works without it.\n";
 
 // --- Command-line defaults ---------------------------------------------------------
 
@@ -219,9 +245,6 @@ fn app(broker: BrokerHandle, backend: &'static str, default_room: u8) -> Router 
         api_sessions: ApiSessions::default(),
     };
     Router::new()
-        .route("/", get(index))
-        .route("/app.css", get(stylesheet))
-        .route("/app.js", get(javascript))
         .route("/health", get(|| async { StatusCode::NO_CONTENT }))
         .route(OPENAPI_PATH, get(openapi))
         .route("/api/v1/status", get(api_status))
@@ -238,30 +261,37 @@ fn app(broker: BrokerHandle, backend: &'static str, default_room: u8) -> Router 
             "/api/v1/sessions/{session_id}/events/ws",
             get(websocket_api_events),
         )
+        .fallback(web_client)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
-async fn index() -> Html<&'static str> {
-    Html(include_str!("../assets/index.html"))
-}
-
-async fn stylesheet() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        include_str!("../assets/app.css"),
-    )
-}
-
-async fn javascript() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-        format!(
-            "\"use strict\";\nconst GLYPHS = Object.freeze({});\n{}",
-            include_str!("../assets/font.json"),
-            include_str!("../assets/app.js")
-        ),
-    )
+/// Serves a file of the embedded web client; every path that is not an API
+/// route lands here.
+async fn web_client(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    let path = if path.is_empty() { WEB_INDEX } else { path };
+    match WebClient::get(path) {
+        Some(file) => {
+            let cache = if path.starts_with(WEB_HASHED_PREFIX) {
+                CACHE_FOREVER
+            } else {
+                CACHE_REVALIDATE
+            };
+            (
+                [
+                    (header::CONTENT_TYPE, file.metadata.mimetype().to_owned()),
+                    (header::CACHE_CONTROL, cache.to_owned()),
+                ],
+                file.data,
+            )
+                .into_response()
+        }
+        None if path == WEB_INDEX => {
+            (StatusCode::SERVICE_UNAVAILABLE, WEB_CLIENT_MISSING).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 /// Describe the gateway
@@ -755,7 +785,7 @@ mod tests {
     use axum::{
         Router,
         body::{Body, to_bytes},
-        http::{Method, Request, StatusCode},
+        http::{Method, Request, StatusCode, header},
         response::Response,
     };
     use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -766,7 +796,7 @@ mod tests {
     use serde_json::{Value, json};
     use tower::ServiceExt as _;
 
-    use super::{ApiDoc, app};
+    use super::{ApiDoc, WEB_INDEX, WebClient, app};
     use utoipa::OpenApi as _;
 
     /// `docs/openapi.json` is the published schema clients generate from. It must
@@ -861,7 +891,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn frontend_should_be_served_at_the_root() {
+    async fn root_should_serve_the_web_client_or_say_how_to_build_it() {
         let response = test_app()
             .oneshot(
                 Request::builder()
@@ -872,30 +902,27 @@ mod tests {
             .await
             .expect("router should answer");
 
-        assert_eq!(response.status(), StatusCode::OK);
+        if WebClient::get(WEB_INDEX).is_some() {
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "text/html");
+        } else {
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        }
     }
 
     #[tokio::test]
-    async fn frontend_should_use_websockets_without_polling_timers() {
+    async fn unknown_paths_should_not_be_found() {
         let response = test_app()
             .oneshot(
                 Request::builder()
-                    .uri("/app.js")
+                    .uri("/assets/missing.js")
                     .body(Body::empty())
                     .expect("request should build"),
             )
             .await
             .expect("router should answer");
-        let bytes = to_bytes(response.into_body(), 1 << 20)
-            .await
-            .expect("response body should be readable");
-        let javascript = str::from_utf8(&bytes).expect("JavaScript should be UTF-8");
 
-        assert!(javascript.contains("new WebSocket"));
-        assert!(javascript.contains("participant_joined"));
-        assert!(javascript.contains("participant_left"));
-        assert!(javascript.contains("room-count"));
-        assert!(!javascript.contains("setInterval"));
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

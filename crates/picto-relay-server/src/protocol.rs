@@ -81,15 +81,19 @@ pub const PAPER_INK: u8 = 0;
 /// Palette index of black ink, the only ink of a one-bit drawing.
 pub const BLACK_INK: u8 = 1;
 
-/// First palette index of the rainbow shades.
-pub const FIRST_RAINBOW_INK: u8 = 3;
+/// Palette index of gray ink.
+pub const GRAY_INK: u8 = 2;
 
-/// Number of rainbow shades, palette indices 3 through 15.
-pub const RAINBOW_INK_COUNT: u8 = PALETTE_INDEX_MASK - FIRST_RAINBOW_INK + 1;
+/// Palette indices of the colored inks, in rainbow order. As a DS shows them:
+/// 3 magenta, 4 pink, 5 red, 6 red orange, 7 orange, 8 yellow, 9 lime,
+/// 10 green, 11 teal, 12 cyan, 13 light blue, 14 blue, 15 dark blue.
+pub const RAINBOW_INKS: &[u8] = &[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
-/// Fixed pen palette indices accepted for text: black and the rainbow shades.
-/// Index 2 is excluded because its meaning is unknown.
-pub const INK_INDICES: &[u8] = &[1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+/// Fixed pen palette indices accepted for text: black, gray, then
+/// [`RAINBOW_INKS`]. That is every index but paper.
+pub const INK_INDICES: &[u8] = &[
+    BLACK_INK, GRAY_INK, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+];
 
 // --- Request limits ------------------------------------------------------------
 
@@ -280,9 +284,10 @@ pub enum ServerWireEvent {
         /// Human-readable state detail.
         detail: String,
     },
-    /// Confirms that an API session owns a virtual station.
+    /// Confirms that the session has joined its room.
     SessionReady {
-        /// Assigned virtual station identity.
+        /// The session's own identity: its `client_id` in rosters and the
+        /// `station_id` of the messages it sends.
         #[schema(value_type = u64)]
         client_id: u32,
     },

@@ -1,0 +1,790 @@
+/*
+ * Layout for Picto Relay. ds.css supplies the DS look (font, bars, buttons,
+ * inputs, alerts, message boxes); everything here is positioned at twice DS
+ * size, so one DS pixel is 2px, and `.console` is zoomed to fit the window.
+ */
+
+/* Above ds.css's layers, below the rules in this file: strips the DS button
+ * look from buttons that are drawn some other way. */
+@layer plain {
+  button.plain {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+  }
+  button.plain:disabled {
+    cursor: default;
+  }
+}
+
+:root {
+  --zoom: 1;
+  --gap: 12px;
+  --tone: #0059f3;
+  --paper: #f8f8f8;
+  --line: #494949;
+  --soft-line: #8a8a8a;
+  --key: #e3e3e3;
+  --key-dark: #c3c3c3;
+  --rainbow: linear-gradient(135deg, #f42a37, #ffc323, #41b74c, #3ecde0, #2e4bbe);
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #0e0e12;
+}
+
+#root {
+  display: contents;
+}
+
+/* ---- Display controls: outside the console, never zoomed ----------------- */
+
+.display-controls {
+  position: fixed;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  color: #b8b8c4;
+  font-size: 20px;
+  line-height: 1;
+  white-space: nowrap;
+  -webkit-font-smoothing: none;
+}
+
+/* The menu button keeps out of the way until it is wanted. */
+.display-controls > .choice {
+  background: #0e0e12;
+  opacity: 0.55;
+}
+
+.display-controls > .choice:hover,
+.display-controls > .choice:focus-visible,
+.display-controls > .choice[aria-pressed="true"] {
+  opacity: 1;
+}
+
+.display-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 10px;
+  border: 2px solid #3c3c48;
+  background: #16161c;
+}
+
+.display-menu > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.display-menu label {
+  display: inline;
+  min-width: 48px;
+}
+
+button.choice {
+  display: grid;
+  place-items: center;
+  min-width: 32px;
+  height: 28px;
+  padding-inline: 6px;
+  border: 2px solid #3c3c48;
+}
+
+.choice[aria-pressed="true"] {
+  border-color: #b8b8c4;
+  background: #b8b8c4;
+  color: #0e0e12;
+}
+
+.display-menu select {
+  height: 28px;
+  border: 2px solid #3c3c48;
+  background: #0e0e12;
+  color: inherit;
+  font: inherit;
+}
+
+.display-menu input[type="range"] {
+  width: 110px;
+  accent-color: #b8b8c4;
+}
+
+.console {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--gap);
+  width: 512px;
+  height: calc(100dvh / var(--zoom));
+  padding-block: 12px;
+  zoom: var(--zoom);
+  color: #000;
+  font-size: 20px;
+  line-height: 24px;
+  -webkit-font-smoothing: none;
+  user-select: none;
+}
+
+/* A window too short for two stacked screens gets them side by side. */
+:root[data-layout="wide"] .console {
+  flex-direction: row;
+  align-items: center;
+  width: calc(1024px + var(--gap));
+}
+
+.screen {
+  position: relative;
+  flex: none;
+  width: 512px;
+  height: 384px;
+  overflow: hidden;
+  box-shadow: 0 0 0 2px #000, 0 0 0 4px #2c2c34;
+}
+
+.screen:not(.ds-grid) {
+  background: var(--paper);
+}
+
+button.plain:focus-visible {
+  outline: 2px solid var(--color-ds-text-focus);
+  outline-offset: -2px;
+}
+
+button:disabled {
+  filter: grayscale(1) opacity(0.6);
+  cursor: default;
+}
+
+.pixel-icon {
+  display: block;
+  flex: none;
+}
+
+/* ---- Bars ---------------------------------------------------------------- */
+
+.title-bar,
+.action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-color: var(--line);
+  color: #fff;
+  text-shadow: 2px 2px 0 rgb(0 0 0 / 0.45);
+}
+
+.title-bar {
+  padding-inline: 10px;
+}
+
+.title-bar.centered {
+  justify-content: center;
+}
+
+.title-bar h1 {
+  margin: 0;
+  font: inherit;
+}
+
+.action-bar {
+  position: absolute;
+  inset: auto 0 0;
+  padding-inline: 12px;
+}
+
+/* ---- Lobby: profile ------------------------------------------------------ */
+
+.profile {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 32px;
+}
+
+.swatches {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.swatches > div {
+  display: grid;
+  grid-template-columns: repeat(8, 40px);
+  gap: 6px 16px;
+}
+
+.swatches > legend {
+  margin-bottom: 6px;
+}
+
+.swatch {
+  width: 40px;
+  height: 32px;
+  border: 2px solid var(--line);
+}
+
+.swatch[aria-pressed="true"] {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px #000, 0 0 0 4px var(--color-ds-text-focus);
+}
+
+/* ---- Lobby: rooms -------------------------------------------------------- */
+
+/* The DS's ruled gray backdrop, behind the room list. */
+.screen.rooms {
+  background: repeating-linear-gradient(#fff 0 2px, var(--color-ds-grid-bg) 2px 4px);
+}
+
+.room-list {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  height: 306px;
+  padding-inline: 28px;
+}
+
+button.room {
+  position: relative;
+  display: grid;
+  grid-template-columns: 52px 1fr auto 26px;
+  align-items: center;
+  gap: 12px;
+  height: 62px;
+  padding: 0 12px 0 4px;
+  border: 2px solid #a2a2a2;
+  background: #fff;
+  color: var(--line);
+}
+
+.room:hover:not(:disabled),
+.room:focus-visible {
+  outline: none;
+  border-color: var(--line);
+  background: color-mix(in oklab, var(--tone), white 82%);
+  color: #000;
+}
+
+/* The DS marks the room under the cursor with a bracket at each corner. */
+.room:hover:not(:disabled)::after,
+.room:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+  border: 4px solid var(--tone);
+  pointer-events: none;
+  mask:
+    linear-gradient(#000 0 0) top left / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) top right / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) bottom left / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) bottom right / 16px 16px no-repeat;
+}
+
+.room-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: 2px solid currentColor;
+  background: #fff;
+  font-size: 40px;
+  line-height: 1;
+}
+
+.room-count {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px;
+  border: 2px solid currentColor;
+  background: #fff;
+}
+
+/* ---- Messages ------------------------------------------------------------ */
+
+/* ds.css tiles these borders in 4px pieces, which leaves hairline gaps when
+ * the console is zoomed to a fraction. The edges are plain, so stretch them. */
+.message,
+.notice {
+  border-image-repeat: stretch;
+}
+
+.message {
+  position: relative;
+  flex: none;
+  width: 472px;
+  padding: 0;
+}
+
+/* The name tag fills the notch at the top-left of the drawing. */
+.message > header {
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  display: block;
+  width: 116px;
+  min-width: 0;
+  height: 36px;
+  margin: 0;
+  /* Puts the name on the same baseline as the first line of typed text. */
+  padding: 10px 4px 0 8px;
+  /* Long names are cut at the side; descenders may reach into the bottom edge. */
+  overflow: clip visible;
+  align-content: normal;
+  translate: none;
+  /* Right and bottom edges only, joined by a step: see tagBorder(). */
+  border-style: solid;
+  border-width: 0 4px 4px 0;
+  border-image-slice: 4;
+  border-image-repeat: stretch;
+  background: color-mix(in oklab, var(--tone), white 60%);
+  color: color-mix(in oklab, var(--tone), black 45%);
+}
+
+/* A one-line message is exactly as tall as its name tag: the tag runs to the
+ * bottom of the box instead of ending in an edge of its own. */
+.message.single > header {
+  bottom: -4px;
+  height: auto;
+  border-bottom-width: 0;
+  /* Step around the box's rounded corners at the top and bottom left. */
+  clip-path: polygon(
+    4px 100%, 4px calc(100% - 2px), 2px calc(100% - 2px), 2px calc(100% - 4px), 0 calc(100% - 4px),
+    0 4px, 2px 4px, 2px 2px, 4px 2px, 4px 0,
+    100% 0, 100% 100%
+  );
+}
+
+/* Our own message, shown at once: faded until the room has it. */
+.message.sending {
+  opacity: 0.6;
+}
+
+.message.failed {
+  opacity: 0.35;
+}
+
+.ink {
+  display: block;
+  width: 456px;
+  image-rendering: pixelated;
+}
+
+/* Four ruled lines: the fifth would sit on the bottom edge of the box. */
+.ruled {
+  background: repeating-linear-gradient(
+      transparent 0 30px,
+      color-mix(in oklab, var(--tone), white 65%) 30px 32px
+    )
+    top / 100% 128px no-repeat;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.notice {
+  flex: none;
+  width: 472px;
+}
+
+.notice b {
+  font-weight: normal;
+}
+
+.notice.enter b {
+  color: var(--color-ds-pictochat-enter);
+}
+
+.notice.leave b {
+  color: var(--color-ds-pictochat-exit);
+}
+
+.notice.error {
+  color: #ff9a9a;
+}
+
+/* ---- Chat: message log --------------------------------------------------- */
+
+/* Stacked, the log takes whatever height the window has to spare. */
+:root[data-layout="stacked"] .screen.log {
+  flex: 1 1 384px;
+  max-height: 768px;
+}
+
+.log-strip {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 38px;
+  padding-block: 8px;
+  border-right: 2px solid var(--line);
+  background: var(--paper);
+  color: var(--line);
+}
+
+.ticks {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+  width: 20px;
+  overflow: hidden;
+}
+
+.ticks i {
+  flex: none;
+  height: 4px;
+}
+
+.room-letter {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 2px solid currentColor;
+  background: #fff;
+}
+
+.log-scroll {
+  position: absolute;
+  inset: 0 0 0 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-block: 4px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  background: repeating-linear-gradient(
+    var(--color-ds-pictochat-bg) 0 6px,
+    var(--color-ds-pictochat-border) 6px 8px
+  );
+}
+
+.log-scroll > :first-child {
+  margin-top: auto;
+}
+
+/* ---- Overlays ------------------------------------------------------------ */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 0.5);
+}
+
+.overlay .alert {
+  justify-content: center;
+}
+
+/* An alert that waits for an answer: the message above its button. */
+.alert.dialog {
+  flex-direction: column;
+  gap: 10px;
+  padding-block: 6px;
+}
+
+.alert button {
+  flex: none;
+  color: #000;
+}
+
+.alert small {
+  display: block;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+/* ---- Chat: composer ------------------------------------------------------ */
+
+.tool-strip {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 28px;
+  padding-top: 2px;
+}
+
+.tool-strip hr {
+  width: 24px;
+  margin: 4px 0;
+  border: 0;
+  border-top: 2px dotted var(--soft-line);
+}
+
+button.tool {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 28px;
+  background: #a2a2a2;
+  color: #fff;
+  line-height: 1;
+}
+
+.tool.scroll {
+  height: 24px;
+  background: var(--soft-line);
+}
+
+.tool[aria-pressed="true"] {
+  background: var(--tone);
+}
+
+.tool.rainbow[aria-pressed="true"] {
+  background: var(--rainbow);
+}
+
+/* The pen color: a chip of the current ink that opens the palette. */
+.ink-tool {
+  position: relative;
+}
+
+.ink-chip {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #fff;
+  background: var(--ink);
+}
+
+.ink-palette {
+  position: absolute;
+  top: -4px;
+  left: 30px;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(4, 28px);
+  gap: 4px;
+  padding: 6px;
+  border: 2px solid var(--line);
+  background: #fff;
+  box-shadow: 4px 4px 0 rgb(0 0 0 / 0.3);
+}
+
+button.ink-swatch {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--line);
+  background: var(--ink);
+}
+
+.ink-swatch[aria-pressed="true"] {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px var(--color-ds-text-focus);
+}
+
+.tool:active,
+.action:active:not(:disabled) {
+  filter: brightness(0.8);
+}
+
+/* The striped gray panel the drawing, keyboard and buttons all sit on. It
+ * runs off the right edge of the screen. */
+.backdrop {
+  position: absolute;
+  inset: 22px -8px 0 30px;
+  background: repeating-linear-gradient(
+    var(--color-ds-pictochat-bg) 0 6px,
+    var(--color-ds-pictochat-border) 6px 8px
+  );
+}
+
+/* An outline with stepped corners, drawn by boxBorder(). */
+.ring {
+  border: 8px solid transparent;
+  border-image-slice: 8;
+  border-image-repeat: stretch;
+}
+
+/* The slimmer outline drawn by slimBorder(), its corners cut to match. */
+.slim-ring {
+  border: 4px solid transparent;
+  border-image-slice: 4;
+  border-image-repeat: stretch;
+  clip-path: polygon(
+    4px 100%, 4px calc(100% - 2px), 2px calc(100% - 2px), 2px calc(100% - 4px), 0 calc(100% - 4px),
+    0 4px, 2px 4px, 2px 2px, 4px 2px, 4px 0,
+    calc(100% - 4px) 0, calc(100% - 4px) 2px, calc(100% - 2px) 2px, calc(100% - 2px) 4px, 100% 4px,
+    100% calc(100% - 4px), calc(100% - 2px) calc(100% - 4px), calc(100% - 2px) calc(100% - 2px),
+    calc(100% - 4px) calc(100% - 2px), calc(100% - 4px) 100%
+  );
+}
+
+.room-status {
+  position: absolute;
+  inset: 0 4px auto 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+}
+
+.members {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+.members li {
+  color: color-mix(in oklab, var(--tone), black 35%);
+}
+
+.members li::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  background: var(--tone);
+}
+
+button.close {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--line);
+  background: var(--key);
+  color: var(--line);
+}
+
+.compose {
+  position: absolute;
+  /* The same 4px of backdrop shows above the drawing as beside it. */
+  top: 30px;
+  left: 38px;
+}
+
+.keyboard {
+  position: absolute;
+  top: 208px;
+  /* Lines up with the left edge of the drawing above it. */
+  left: 38px;
+  width: 400px;
+  display: grid;
+  grid-template-rows: repeat(5, 32px);
+  grid-template-columns: repeat(24, 16px);
+  height: 168px;
+  padding: 0 4px;
+  background: #fff;
+}
+
+button.key {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #fff;
+  background: var(--key);
+  line-height: 1;
+}
+
+/* Keys can be dragged, so a touch on one must not scroll the page. */
+.key {
+  touch-action: none;
+}
+
+/* A character on its way from the keyboard to the drawing. It lives outside
+ * the console, on the page itself. */
+.key-ghost {
+  position: fixed;
+  z-index: 4;
+  translate: -50% -55%;
+  background: var(--ink);
+  background-clip: text;
+  color: transparent;
+  line-height: 1;
+  pointer-events: none;
+  -webkit-font-smoothing: none;
+}
+
+.key.function {
+  background: var(--key-dark);
+}
+
+.key.word {
+  font-size: 10px;
+}
+
+.key:active,
+.key[aria-pressed="true"] {
+  background: var(--tone);
+  color: #fff;
+}
+
+/* Send, Copy and Clear: one tab against the right edge of the screen, with
+ * stepped corners on its left side only and a line between the buttons. */
+.actions {
+  position: absolute;
+  top: 208px;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  width: 66px;
+  height: 168px;
+  border-style: solid;
+  border-color: transparent;
+  border-width: 8px 0 8px 8px;
+  border-image-slice: 8;
+  border-image-repeat: stretch;
+  background: #d8d8d8;
+  clip-path: polygon(
+    8px 100%, 8px calc(100% - 2px), 6px calc(100% - 2px), 6px calc(100% - 4px),
+    4px calc(100% - 4px), 4px calc(100% - 6px), 2px calc(100% - 6px), 2px calc(100% - 8px),
+    0 calc(100% - 8px),
+    0 8px, 2px 8px, 2px 6px, 4px 6px, 4px 4px, 6px 4px, 6px 2px, 8px 2px, 8px 0,
+    100% 0, 100% 100%
+  );
+}
+
+button.action {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  align-content: center;
+  gap: 2px;
+  color: #5a5a62;
+}
+
+/* The dividing line: dark, with the same light edge under it as the outline. */
+.action + .action {
+  border-top: 2px solid currentColor;
+  box-shadow: inset 0 2px #f8f8f8;
+}
+
+.action.send {
+  flex: 1.25;
+}

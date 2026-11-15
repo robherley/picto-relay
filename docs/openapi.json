@@ -496,7 +496,7 @@
           {
             "type": "integer",
             "format": "int32",
-            "description": "One of the supported fixed pen colors.",
+            "description": "One of the indices in `ink_indices` from `GET /status`.",
             "minimum": 0
           },
           {
@@ -504,7 +504,7 @@
             "description": "Only `rainbow` is accepted."
           }
         ],
-        "description": "Fixed DS drawing ink index or the string `rainbow`."
+        "description": "A fixed pen color, or the string `rainbow`.\n\nFixed colors are DS palette indices. As a DS shows them: 1 black, 2 gray,\n3 magenta, 4 pink, 5 red, 6 red orange, 7 orange, 8 yellow, 9 lime,\n10 green, 11 teal, 12 cyan, 13 light blue, 14 blue, 15 dark blue. `rainbow`\ncycles through 3 to 15 in that order."
       },
       "Participant": {
         "type": "object",
@@ -711,7 +711,7 @@
           },
           {
             "type": "object",
-            "description": "Confirms that an API session owns a virtual station.",
+            "description": "Confirms that the session has joined its room.",
             "required": [
               "client_id",
               "type"
@@ -720,7 +720,7 @@
               "client_id": {
                 "type": "integer",
                 "format": "int64",
-                "description": "Assigned virtual station identity.",
+                "description": "The session's own identity: its `client_id` in rosters and the\n`station_id` of the messages it sends.",
                 "minimum": 0
               },
               "type": {

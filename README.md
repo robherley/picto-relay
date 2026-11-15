@@ -10,8 +10,8 @@ backend, and Pi software-host implementation have been retired.
 
 ## Run
 
-Install Rust and `just` (`brew install just` on macOS). Building firmware also
-needs ESP-IDF v5.5.2, which `just espressif` downloads into the project; see
+Install Rust, Node.js 22.18 or newer, and `just` (`brew install just` on macOS). Building
+firmware also needs ESP-IDF v5.5.2, which `just espressif` downloads into the project; see
 the [firmware instructions](firmware/esp32/README.md).
 
 ```sh
@@ -19,6 +19,8 @@ just                    # List commands
 just server             # Run with the connected ESP32
 just server-memory      # Run without hardware
 ```
+
+Both build the [web client](web/README.md) first; the server embeds it.
 
 Stop the server before uploading firmware so the serial port is free:
 
@@ -47,7 +49,8 @@ Only one API session can own the ESP32. For hardware-free UI/API development,
 
 ## Components
 
-- [Server](crates/picto-relay-server/README.md): browser UI, JSON API, sessions, and USB worker.
+- [Server](crates/picto-relay-server/README.md): JSON API, sessions, and USB worker.
+- [Web client](web/README.md): the PictoChat-style browser UI, in React.
 - [Codec](crates/picto-relay-codec/README.md): captured Nintendo packet and drawing formats.
 - [USB link](crates/picto-relay-link/README.md): the USB protocol definition and host-side framing.
 - [Firmware](firmware/esp32/README.md): C protocol state machine and ESP-IDF radio hooks.
@@ -61,7 +64,7 @@ their commands and runtime descriptions are historical, not supported workflows.
 ## Verify
 
 ```sh
-just test               # Rust, browser-tool and firmware protocol tests
+just test               # Web client, Rust and firmware protocol tests
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 ```
 
