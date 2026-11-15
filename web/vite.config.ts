@@ -10,7 +10,11 @@ export default defineConfig(({ mode }) => {
   const server = loadEnv(mode, ".", "PICTO_").PICTO_RELAY_URL ?? "http://127.0.0.1:3001";
   return {
     plugins: [react()],
-    server: { proxy: { "/api": { target: server, ws: true } } },
+    server: {
+      proxy: { "/api": { target: server, ws: true } },
+      // The glyph table is imported from the server crate, outside this folder.
+      fs: { allow: [".."] },
+    },
     build: { target: "es2022" },
     test: { environment: "node" },
   };

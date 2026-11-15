@@ -6,7 +6,6 @@ import { Lobby } from "./components/Lobby";
 import { useGateway } from "./hooks/useGateway";
 import { profileTone, useProfile } from "./hooks/useProfile";
 import { useDisplay } from "./hooks/useDisplay";
-import { fontReady } from "./pictochat/glyphs";
 
 interface Session {
   id: number;
@@ -20,12 +19,6 @@ export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [joining, setJoining] = useState(false);
   const [problem, setProblem] = useState<string>();
-  const [fontLoaded, setFontLoaded] = useState(false);
-  const chatting = session !== null && fontLoaded;
-
-  useEffect(() => {
-    void fontReady().then(() => setFontLoaded(true));
-  }, []);
 
   // Closing the tab should free the room slot (and, with a radio, the radio).
   const sessionId = session?.id;
@@ -62,7 +55,7 @@ export function App() {
     <>
       <DisplayControls settings={settings} display={display} onChange={change} />
       <main className="console" style={{ "--tone": profileTone(profile) } as CSSProperties}>
-        {chatting ? (
+        {session ? (
           <Chat key={session.id} session={session} profile={profile} onLeave={leave} />
         ) : (
           <Lobby

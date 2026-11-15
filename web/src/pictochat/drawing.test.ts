@@ -13,14 +13,8 @@ describe("packing", () => {
     expect(Array.from(unpack(bytes).slice(0, 4))).toEqual([3, 15, 0, 0]);
   });
 
-  it("reads monochrome bitmaps most significant bit first", () => {
-    const bytes = new Uint8Array(3072);
-    bytes[0] = 0x81;
-    expect(Array.from(unpack(bytes).slice(0, 8))).toEqual([1, 0, 0, 0, 0, 0, 0, 1]);
-  });
-
   it("rejects other lengths", () => {
-    expect(() => unpack(new Uint8Array(1))).toThrow(/length/);
+    expect(() => unpack(new Uint8Array(3072))).toThrow(/length/);
   });
 
   it("round-trips through pack and base64", () => {

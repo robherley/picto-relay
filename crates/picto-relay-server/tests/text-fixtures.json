@@ -2,31 +2,49 @@
   {
     "text": "hello beautiful world",
     "ink": 1,
-    "hash": 508927093
+    "typed": true,
+    "hash": 1006744955
   },
   {
     "text": "HELLO WORLD",
     "ink": 5,
-    "hash": 3326715365
+    "typed": true,
+    "hash": 2627800238
   },
   {
     "text": "HELLO WORLD",
     "ink": "rainbow",
-    "hash": 1090953277
+    "typed": true,
+    "hash": 386477920
   },
   {
     "text": "First\nSecond\nThird",
     "ink": 11,
-    "hash": 652055337
+    "typed": true,
+    "hash": 1558488019
   },
   {
     "text": "ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ",
     "ink": "rainbow",
-    "hash": 822173137
+    "typed": true,
+    "hash": 1885759785
   },
   {
     "text": "Text with ?! punctuation and 123",
     "ink": 3,
-    "hash": 2957181541
+    "typed": false,
+    "hash": 942047912
+  },
+  {
+    "text": "Hello there!",
+    "ink": 1,
+    "typed": true,
+    "hash": 961198022
+  },
+  {
+    "text": "かな カナ ♪ ☆ é",
+    "ink": 12,
+    "typed": true,
+    "hash": 1663901845
   }
 ]

@@ -5,7 +5,10 @@ made to look and work like PictoChat on a Nintendo DS: a room list, a message
 log on the top screen, and a drawing area with the DS keyboard on the bottom.
 
 It is a React app built with Vite. The DS look comes from
-[ds.css](https://github.com/spiritov/ds.css). The REST client is generated from
+[ds.css](https://github.com/spiritov/ds.css), and so does the font: `npm run
+glyphs` turns it into the table of glyph bitmaps
+([`font.json`](../crates/picto-relay-server/src/font.json)) that both this
+client and the server draw text with. The REST client is generated from
 [`docs/openapi.json`](../docs/openapi.json) with
 [@hey-api/openapi-ts](https://heyapi.dev) on every build, so it cannot drift
 from the server; it is not checked in.
@@ -41,7 +44,8 @@ After changing an API type in the server, run `just openapi` to rewrite
 | Path | What it holds |
 | --- | --- |
 | `src/api/` | `client.ts` re-exports the generated client and opens the two WebSocket streams |
-| `src/pictochat/` | The drawing surface, typing, keyboard pages and font sampling: no React, unit tested |
+| `src/pictochat/` | The drawing surface, typing, keyboard pages and glyphs: no React, unit tested |
+| `scripts/` | `font-table.mjs`, which builds the glyph table from the DS font |
 | `src/hooks/` | Rooms, session events, the saved profile, and the display settings |
 | `src/components/` | The two screens of the lobby and of a chat |
 | `src/styles.css` | Layout at twice DS size, on top of ds.css |

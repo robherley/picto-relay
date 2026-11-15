@@ -820,7 +820,10 @@ mod tests {
         let short = native_drawing(station, &bitmap).unwrap();
         assert_eq!(short.len(), link::MIN_DRAWING_BYTES);
         let decoded = PictoChatMessage::parse(&short).unwrap();
-        assert_eq!(native_message_to_api_bitmap(&decoded), bitmap);
+        assert_eq!(
+            native_message_to_api_bitmap(&decoded),
+            crate::bitmap::palette_bitmap(&bitmap)
+        );
         assert!(native_drawing(station, &[0; 3072]).is_err());
     }
 
@@ -956,7 +959,8 @@ mod tests {
                 else {
                     panic!("expected drawing")
                 };
-                assert_eq!(actual, &bitmap);
+                // Received drawings are always reported as palette bitmaps.
+                assert_eq!(actual, &crate::bitmap::palette_bitmap(&bitmap));
                 assert_eq!(name, "DS");
             }
         }

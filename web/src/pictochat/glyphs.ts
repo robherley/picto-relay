@@ -1,65 +1,38 @@
+import table from "../../../crates/picto-relay-server/src/font.json";
 import type { Point } from "./drawing";
 import type { Glyph } from "./typing";
 
-// Typed text uses the same pixel font as the interface (ds.css's recreation of
-// the DS system font). Its outlines sit on a ten-unit grid, so drawing a
-// character much larger than life and sampling the middle of each grid square
-// recovers the exact bitmap, however the browser antialiases the edges.
+// Typed text is drawn from a table of the DS font's bitmaps, the same table
+// the server renders API text with, so both produce the same pixels. The
+// table is generated from the font ds.css ships: see scripts/font-table.mjs.
 
-const FONT_FAMILY = "ds-system";
-/** Font size at which one grid square of the font is one pixel. */
-const EM = 10;
-/** Canvas pixels drawn per font pixel while sampling. */
-const SAMPLE_SCALE = 8;
-/** Font pixels sampled above and below the baseline, and across. */
-const ASCENT = 12;
-const DESCENT = 4;
-const CELL_WIDTH = 24;
-/** Room left of the pen for characters that overhang it. */
-const LEFT_MARGIN = 2;
-const OPAQUE = 128;
+/** `[advance]` for a blank glyph, else `[advance, x, y, ...rows]`. */
+type Packed = number[];
 
-const cache = new Map<string, Glyph>();
-let context: CanvasRenderingContext2D | null = null;
+const TABLE = table as { placeholder: Packed; glyphs: Record<string, Packed> };
 
-/** Resolves once the pixel font can be drawn to a canvas. */
-export async function fontReady(): Promise<void> {
-  await document.fonts.load(`${EM}px ${FONT_FAMILY}`);
+/** Bit `k` of a row is the pixel `k` columns right of the glyph's `x`. */
+function unpack([advance = 0, left = 0, top = 0, ...rows]: Packed): Glyph {
+  const dots: Point[] = [];
+  rows.forEach((row, index) => {
+    for (let column = 0; row >> column !== 0; column += 1) {
+      if ((row >> column) & 1) dots.push({ x: left + column, y: top + index });
+    }
+  });
+  return { advance, dots };
 }
 
-/** The bitmap of one character. Call after `fontReady`. */
+/** Drawn for a character the font lacks. */
+const PLACEHOLDER = unpack(TABLE.placeholder);
+const cache = new Map<string, Glyph>();
+
+/** The bitmap of one character, or the placeholder if the font lacks it. */
 export function glyphOf(character: string): Glyph {
   let glyph = cache.get(character);
   if (!glyph) {
-    glyph = rasterize(character);
+    const packed = Object.hasOwn(TABLE.glyphs, character) ? TABLE.glyphs[character] : undefined;
+    glyph = packed ? unpack(packed) : PLACEHOLDER;
     cache.set(character, glyph);
   }
   return glyph;
-}
-
-function rasterize(character: string): Glyph {
-  const width = CELL_WIDTH * SAMPLE_SCALE;
-  const height = (ASCENT + DESCENT) * SAMPLE_SCALE;
-  if (!context) {
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) throw new Error("This browser cannot draw to a canvas");
-    context.font = `${EM * SAMPLE_SCALE}px ${FONT_FAMILY}`;
-    context.textBaseline = "alphabetic";
-  }
-  context.clearRect(0, 0, width, height);
-  context.fillText(character, LEFT_MARGIN * SAMPLE_SCALE, ASCENT * SAMPLE_SCALE);
-  const alpha = context.getImageData(0, 0, width, height).data;
-  const middle = SAMPLE_SCALE / 2;
-  const dots: Point[] = [];
-  for (let y = 0; y < ASCENT + DESCENT; y += 1) {
-    for (let x = 0; x < CELL_WIDTH; x += 1) {
-      const sample = (y * SAMPLE_SCALE + middle) * width + x * SAMPLE_SCALE + middle;
-      if (alpha[sample * 4 + 3]! >= OPAQUE) dots.push({ x: x - LEFT_MARGIN, y: y - ASCENT });
-    }
-  }
-  const advance = Math.round(context.measureText(character).width / SAMPLE_SCALE);
-  return { advance, dots };
 }

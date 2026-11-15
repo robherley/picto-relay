@@ -2,7 +2,7 @@
 use anyhow::{Context, Result, bail, ensure};
 use picto_relay_server::{
     broker::{BrokerHandle, RelaySession},
-    protocol::ServerWireEvent,
+    protocol::SessionEvent,
 };
 use std::time::{Duration, Instant};
 
@@ -36,17 +36,17 @@ fn drawing(dense: bool) -> Vec<u8> {
 async fn wait_for(session: &mut RelaySession, ready: bool) -> Result<()> {
     tokio::time::timeout(Duration::from_secs(if ready { 30 } else { 45 }), async {
         while let Some(envelope) = session.events.recv().await {
-            match envelope.event {
-                ServerWireEvent::SessionReady { .. } if ready => return Ok(()),
-                ServerWireEvent::Delivered { message_id } if !ready => {
+            match envelope {
+                SessionEvent::SessionReady { .. } if ready => return Ok(()),
+                SessionEvent::Delivered { message_id } if !ready => {
                     println!("delivered message={message_id}");
                     return Ok(());
                 }
-                ServerWireEvent::DeliveryTimedOut { message_id } => {
+                SessionEvent::DeliveryTimedOut { message_id } => {
                     bail!("delivery timed out: {message_id}")
                 }
-                ServerWireEvent::Error { code, message } => bail!("{code}: {message}"),
-                ServerWireEvent::BackendState {
+                SessionEvent::Error { code, message } => bail!("{code}: {message}"),
+                SessionEvent::BackendState {
                     state: "reconnecting",
                     detail,
                 } => bail!("session interrupted: {detail}"),

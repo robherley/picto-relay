@@ -1,10 +1,9 @@
-//! Versioned request, response, and event shapes for the JSON API.
+//! Request, response, and event shapes for the JSON API.
+//!
+//! The API is versioned by its path (`/api/v1`), not by a field in each body.
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-
-/// Current JSON API protocol version.
-pub const PROTOCOL_VERSION: u8 = 1;
 
 // --- Rooms -----------------------------------------------------------------
 
@@ -131,8 +130,6 @@ pub struct CreateSessionRequest {
 /// Response returned after creating a virtual `PictoChat` session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ToSchema)]
 pub struct CreateSessionResponse {
-    /// JSON API version.
-    pub version: u8,
     /// Identifier used by subsequent message and event requests.
     #[schema(value_type = u64)]
     pub session_id: u32,
@@ -156,8 +153,6 @@ pub struct RoomSummary {
 /// Response returned by the room roster endpoint.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
 pub struct RoomsResponse {
-    /// JSON API version.
-    pub version: u8,
     /// Room snapshots in A-through-D order.
     pub rooms: Vec<RoomSummary>,
 }
@@ -169,40 +164,53 @@ pub struct SendMessageRequest {
     pub text: Option<String>,
     /// Ink for text rendering; defaults to black.
     pub ink: Option<crate::text::Ink>,
-    /// Base64-encoded, row-major, one-bit 256x96 bitmap.
+    /// A black drawing: base64 of a row-major 256x96 bitmap, one bit per
+    /// pixel, most significant bit first.
     #[serde(default)]
     #[schema(content_encoding = "base64")]
     pub bitmap: String,
-    /// Optional base64 row-major 4bpp bitmap; mutually exclusive with bitmap.
+    /// A drawing in color: base64 of a row-major 256x96 bitmap, four bits per
+    /// pixel (an ink index), the left pixel of each byte in the low nibble.
     #[schema(content_encoding = "base64")]
     pub palette_bitmap: Option<String>,
-}
-
-/// Response returned when a drawing has entered the broker queue.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ToSchema)]
-pub struct AcceptedResponse {
-    /// JSON API version.
-    pub version: u8,
-    /// Stable submission state; currently always `queued`.
-    pub status: &'static str,
 }
 
 /// Queued events returned by the polling endpoint.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
 pub struct EventsResponse {
-    /// JSON API version.
-    pub version: u8,
     /// Events accumulated since this session's previous poll.
-    pub events: Vec<ServerEnvelope>,
+    pub events: Vec<SessionEvent>,
+}
+
+/// One person seen in a session's room.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
+pub struct SessionUser {
+    /// The identity this person has in rosters and on their messages.
+    #[schema(value_type = u64)]
+    pub client_id: u32,
+    /// Their name when last seen.
+    pub name: String,
+    /// Whether they are in the room now; `false` once they have left.
+    pub active: bool,
+}
+
+/// A session: the room it is in and everyone it has seen there.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
+pub struct SessionResponse {
+    /// Room number from `0` (A) through `3` (D).
+    pub room: u8,
+    /// The room's letter: `A`, `B`, `C` or `D`.
+    pub room_letter: &'static str,
+    /// Everyone seen in the room since the session began, the session's own
+    /// user included, in the order they were first seen.
+    pub users: Vec<SessionUser>,
 }
 
 /// Description of the active gateway and drawing contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ToSchema)]
 pub struct StatusResponse {
-    /// Accepted fixed pen indices; rainbow is also available for text.
+    /// Accepted fixed pen indices; text also accepts `rainbow`.
     pub ink_indices: &'static [u8],
-    /// Whether text accepts rainbow ink.
-    pub rainbow_text: bool,
     /// Maximum text length in UTF-16 units.
     pub text_max_units: usize,
     /// Maximum personal message length in UTF-16 units.
@@ -211,60 +219,31 @@ pub struct StatusResponse {
     pub profile_color_max: u8,
     /// Safe drawing rectangles as [x, y, width, height].
     pub drawable_regions: [[usize; 4]; 2],
-    /// JSON API version.
-    pub version: u8,
     /// Radio implementation currently attached to the broker.
     pub backend: &'static str,
     /// Required logical bitmap width.
     pub bitmap_width: usize,
     /// Required logical bitmap height.
     pub bitmap_height: usize,
-    /// Required decoded bitmap byte length.
+    /// Decoded byte length of a one-bit `bitmap`.
     pub bitmap_bytes: usize,
-    /// Encoding expected in JSON request bodies.
-    pub bitmap_encoding: &'static str,
-    /// Decoded byte length for indexed color drawings.
+    /// Decoded byte length of a four-bit `palette_bitmap`.
     pub palette_bitmap_bytes: usize,
-    /// Encoding for the optional indexed color field.
-    pub palette_bitmap_encoding: &'static str,
 }
 
 /// Stable JSON error response.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
 pub struct ErrorResponse {
-    /// JSON API version.
-    pub version: u8,
     /// Stable machine-readable error code.
     pub code: &'static str,
     /// Human-readable explanation.
     pub message: String,
 }
 
-/// A versioned event returned to an API client.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
-pub struct ServerEnvelope {
-    /// Protocol version used to encode this event.
-    pub version: u8,
-    /// Event payload.
-    #[serde(flatten)]
-    pub event: ServerWireEvent,
-}
-
-impl ServerEnvelope {
-    /// Wraps an event in the current protocol version.
-    #[must_use]
-    pub const fn new(event: ServerWireEvent) -> Self {
-        Self {
-            version: PROTOCOL_VERSION,
-            event,
-        }
-    }
-}
-
-/// Server-originated session events.
+/// Something that happened in a session, selected by its `type`.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum ServerWireEvent {
+pub enum SessionEvent {
     /// Personal profile observed in a physical room.
     Profile {
         /// MAC-derived participant identifier.
@@ -322,11 +301,10 @@ pub enum ServerWireEvent {
         /// Sender transfer tag promoted to the API message identifier.
         #[schema(value_type = u64)]
         message_id: u32,
-        /// Base64-encoded packed monochrome bitmap.
-        bitmap: String,
-        /// Optional lossless 4bpp palette bitmap; bitmap remains a monochrome fallback.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        palette_bitmap: Option<String>,
+        /// The drawing: base64 of a row-major 256x96 bitmap, four bits per
+        /// pixel, the left pixel of each byte in the low nibble.
+        #[schema(content_encoding = "base64")]
+        palette_bitmap: String,
     },
     /// Reports acknowledgement of a submitted message.
     Delivered {

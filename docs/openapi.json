@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Picto Relay",
-    "description": "Join a Nintendo DS PictoChat room and exchange drawings over HTTP and WebSocket.\n\nA session is one participant in one room. Create it, send drawings or text, and read events by polling or over a WebSocket. Events are `ServerEnvelope` objects whose `type` field selects the variant.",
+    "description": "Join a Nintendo DS PictoChat room and exchange drawings over HTTP and WebSocket.\n\nA session is one participant in one room. Create it, send drawings or text, and read events by polling or over a WebSocket. Events are `SessionEvent` objects whose `type` field selects the variant.",
     "license": {
       "name": "MIT",
       "identifier": "MIT"
@@ -110,6 +110,59 @@
       }
     },
     "/api/v1/sessions/{session_id}": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Inspect a session",
+        "description": "Reports the room the session is in and everyone it has seen there. People\nwho have left stay in the list with `active` set to `false`.",
+        "operationId": "getSession",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Identifier returned when the session was created",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The session's room and users",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The broker is unavailable or busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "sessions"
@@ -218,7 +271,7 @@
           "sessions"
         ],
         "summary": "Stream session events (WebSocket)",
-        "description": "Upgrades to a WebSocket. Each event is one `ServerEnvelope` as a JSON text\nframe. A session has one event consumer: while a WebSocket is attached,\npolling returns 409, and a second WebSocket is refused.",
+        "description": "Upgrades to a WebSocket. Each event is one `SessionEvent` as a JSON text\nframe. A session has one event consumer: while a WebSocket is attached,\npolling returns 409, and a second WebSocket is refused.",
         "operationId": "streamSessionEvents",
         "parameters": [
           {
@@ -235,7 +288,7 @@
         ],
         "responses": {
           "101": {
-            "description": "Switching to WebSocket; text frames are `ServerEnvelope` JSON"
+            "description": "Switching to WebSocket; text frames are `SessionEvent` JSON"
           },
           "404": {
             "description": "No such session",
@@ -266,7 +319,7 @@
           "sessions"
         ],
         "summary": "Send a drawing or text",
-        "description": "Queues one message. Supply exactly one of `text` (rendered by the server,\noptionally with `ink`), `bitmap` (1 bit per pixel) or `palette_bitmap`\n(4 bits per pixel). Delivery is reported later as a `delivered` or\n`delivery_timed_out` event.",
+        "description": "Queues one message. Supply exactly one of `text` (drawn by the server in\nthe DS font, optionally with `ink`), `bitmap` (1 bit per pixel) or\n`palette_bitmap` (4 bits per pixel). Delivery is reported later as a\n`delivered` or `delivery_timed_out` event.",
         "operationId": "sendMessage",
         "parameters": [
           {
@@ -293,14 +346,7 @@
         },
         "responses": {
           "202": {
-            "description": "Message queued",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AcceptedResponse"
-                }
-              }
-            }
+            "description": "Message queued"
           },
           "404": {
             "description": "No such session",
@@ -341,7 +387,7 @@
           "gateway"
         ],
         "summary": "Describe the gateway",
-        "description": "Reports the active radio backend and the drawing contract: bitmap sizes and\nencodings, text and profile limits, accepted ink indices and the drawable area.",
+        "description": "Reports the active radio backend and the drawing contract: bitmap sizes,\ntext and profile limits, accepted ink indices and the drawable area.",
         "operationId": "getStatus",
         "responses": {
           "200": {
@@ -360,26 +406,6 @@
   },
   "components": {
     "schemas": {
-      "AcceptedResponse": {
-        "type": "object",
-        "description": "Response returned when a drawing has entered the broker queue.",
-        "required": [
-          "version",
-          "status"
-        ],
-        "properties": {
-          "status": {
-            "type": "string",
-            "description": "Stable submission state; currently always `queued`."
-          },
-          "version": {
-            "type": "integer",
-            "format": "int32",
-            "description": "JSON API version.",
-            "minimum": 0
-          }
-        }
-      },
       "CreateSessionRequest": {
         "type": "object",
         "description": "Request body for creating one virtual `PictoChat` session.",
@@ -418,7 +444,6 @@
         "type": "object",
         "description": "Response returned after creating a virtual `PictoChat` session.",
         "required": [
-          "version",
           "session_id",
           "room"
         ],
@@ -434,12 +459,6 @@
             "format": "int64",
             "description": "Identifier used by subsequent message and event requests.",
             "minimum": 0
-          },
-          "version": {
-            "type": "integer",
-            "format": "int32",
-            "description": "JSON API version.",
-            "minimum": 0
           }
         }
       },
@@ -447,7 +466,6 @@
         "type": "object",
         "description": "Stable JSON error response.",
         "required": [
-          "version",
           "code",
           "message"
         ],
@@ -459,12 +477,6 @@
           "message": {
             "type": "string",
             "description": "Human-readable explanation."
-          },
-          "version": {
-            "type": "integer",
-            "format": "int32",
-            "description": "JSON API version.",
-            "minimum": 0
           }
         }
       },
@@ -472,22 +484,15 @@
         "type": "object",
         "description": "Queued events returned by the polling endpoint.",
         "required": [
-          "version",
           "events"
         ],
         "properties": {
           "events": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ServerEnvelope"
+              "$ref": "#/components/schemas/SessionEvent"
             },
             "description": "Events accumulated since this session's previous poll."
-          },
-          "version": {
-            "type": "integer",
-            "format": "int32",
-            "description": "JSON API version.",
-            "minimum": 0
           }
         }
       },
@@ -564,7 +569,6 @@
         "type": "object",
         "description": "Response returned by the room roster endpoint.",
         "required": [
-          "version",
           "rooms"
         ],
         "properties": {
@@ -574,12 +578,6 @@
               "$ref": "#/components/schemas/RoomSummary"
             },
             "description": "Room snapshots in A-through-D order."
-          },
-          "version": {
-            "type": "integer",
-            "format": "int32",
-            "description": "JSON API version.",
-            "minimum": 0
           }
         }
       },
@@ -589,7 +587,7 @@
         "properties": {
           "bitmap": {
             "type": "string",
-            "description": "Base64-encoded, row-major, one-bit 256x96 bitmap.",
+            "description": "A black drawing: base64 of a row-major 256x96 bitmap, one bit per\npixel, most significant bit first.",
             "contentEncoding": "base64"
           },
           "ink": {
@@ -608,7 +606,7 @@
               "string",
               "null"
             ],
-            "description": "Optional base64 row-major 4bpp bitmap; mutually exclusive with bitmap.",
+            "description": "A drawing in color: base64 of a row-major 256x96 bitmap, four bits per\npixel (an ink index), the left pixel of each byte in the low nibble.",
             "contentEncoding": "base64"
           },
           "text": {
@@ -620,30 +618,7 @@
           }
         }
       },
-      "ServerEnvelope": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/ServerWireEvent",
-            "description": "Event payload."
-          },
-          {
-            "type": "object",
-            "required": [
-              "version"
-            ],
-            "properties": {
-              "version": {
-                "type": "integer",
-                "format": "int32",
-                "description": "Protocol version used to encode this event.",
-                "minimum": 0
-              }
-            }
-          }
-        ],
-        "description": "A versioned event returned to an API client."
-      },
-      "ServerWireEvent": {
+      "SessionEvent": {
         "oneOf": [
           {
             "type": "object",
@@ -822,14 +797,10 @@
               "station_id",
               "name",
               "message_id",
-              "bitmap",
+              "palette_bitmap",
               "type"
             ],
             "properties": {
-              "bitmap": {
-                "type": "string",
-                "description": "Base64-encoded packed monochrome bitmap."
-              },
               "message_id": {
                 "type": "integer",
                 "format": "int64",
@@ -841,11 +812,9 @@
                 "description": "Best available display name."
               },
               "palette_bitmap": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Optional lossless 4bpp palette bitmap; bitmap remains a monochrome fallback."
+                "type": "string",
+                "description": "The drawing: base64 of a row-major 256x96 bitmap, four bits per\npixel, the left pixel of each byte in the low nibble.",
+                "contentEncoding": "base64"
               },
               "station_id": {
                 "type": "integer",
@@ -931,26 +900,75 @@
             }
           }
         ],
-        "description": "Server-originated session events."
+        "description": "Something that happened in a session, selected by its `type`."
+      },
+      "SessionResponse": {
+        "type": "object",
+        "description": "A session: the room it is in and everyone it has seen there.",
+        "required": [
+          "room",
+          "room_letter",
+          "users"
+        ],
+        "properties": {
+          "room": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Room number from `0` (A) through `3` (D).",
+            "minimum": 0
+          },
+          "room_letter": {
+            "type": "string",
+            "description": "The room's letter: `A`, `B`, `C` or `D`."
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionUser"
+            },
+            "description": "Everyone seen in the room since the session began, the session's own\nuser included, in the order they were first seen."
+          }
+        }
+      },
+      "SessionUser": {
+        "type": "object",
+        "description": "One person seen in a session's room.",
+        "required": [
+          "client_id",
+          "name",
+          "active"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "description": "Whether they are in the room now; `false` once they have left."
+          },
+          "client_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The identity this person has in rosters and on their messages.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "Their name when last seen."
+          }
+        }
       },
       "StatusResponse": {
         "type": "object",
         "description": "Description of the active gateway and drawing contract.",
         "required": [
           "ink_indices",
-          "rainbow_text",
           "text_max_units",
           "profile_message_max_units",
           "profile_color_max",
           "drawable_regions",
-          "version",
           "backend",
           "bitmap_width",
           "bitmap_height",
           "bitmap_bytes",
-          "bitmap_encoding",
-          "palette_bitmap_bytes",
-          "palette_bitmap_encoding"
+          "palette_bitmap_bytes"
         ],
         "properties": {
           "backend": {
@@ -959,12 +977,8 @@
           },
           "bitmap_bytes": {
             "type": "integer",
-            "description": "Required decoded bitmap byte length.",
+            "description": "Decoded byte length of a one-bit `bitmap`.",
             "minimum": 0
-          },
-          "bitmap_encoding": {
-            "type": "string",
-            "description": "Encoding expected in JSON request bodies."
           },
           "bitmap_height": {
             "type": "integer",
@@ -994,16 +1008,12 @@
               "format": "int32",
               "minimum": 0
             },
-            "description": "Accepted fixed pen indices; rainbow is also available for text."
+            "description": "Accepted fixed pen indices; text also accepts `rainbow`."
           },
           "palette_bitmap_bytes": {
             "type": "integer",
-            "description": "Decoded byte length for indexed color drawings.",
+            "description": "Decoded byte length of a four-bit `palette_bitmap`.",
             "minimum": 0
-          },
-          "palette_bitmap_encoding": {
-            "type": "string",
-            "description": "Encoding for the optional indexed color field."
           },
           "profile_color_max": {
             "type": "integer",
@@ -1016,19 +1026,9 @@
             "description": "Maximum personal message length in UTF-16 units.",
             "minimum": 0
           },
-          "rainbow_text": {
-            "type": "boolean",
-            "description": "Whether text accepts rainbow ink."
-          },
           "text_max_units": {
             "type": "integer",
             "description": "Maximum text length in UTF-16 units.",
-            "minimum": 0
-          },
-          "version": {
-            "type": "integer",
-            "format": "int32",
-            "description": "JSON API version.",
             "minimum": 0
           }
         }

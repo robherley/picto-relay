@@ -11,18 +11,18 @@ use axum::{
     },
     http::{StatusCode, Uri, header},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use clap::{Parser, ValueEnum};
 use picto_relay_server::{
     broker::{BrokerError, BrokerHandle, ClientId, DEFAULT_SERIAL_PORT},
     protocol::{
-        AcceptedResponse, BITMAP_BYTES, CANVAS_HEIGHT, CANVAS_WIDTH, CreateSessionRequest,
-        CreateSessionResponse, DRAWABLE_REGIONS, ErrorResponse, EventsResponse, INK_INDICES,
-        NAME_MAX_UNITS, PALETTE_BITMAP_BYTES, PROFILE_COLOR_MAX, PROFILE_MESSAGE_MAX_UNITS,
-        PROTOCOL_VERSION, ROOM_NAMES, RoomsResponse, SendMessageRequest, ServerEnvelope,
-        StatusResponse, TEXT_MAX_UNITS,
+        BITMAP_BYTES, CANVAS_HEIGHT, CANVAS_WIDTH, CreateSessionRequest, CreateSessionResponse,
+        DRAWABLE_REGIONS, ErrorResponse, EventsResponse, INK_INDICES, NAME_MAX_UNITS,
+        PALETTE_BITMAP_BYTES, PROFILE_COLOR_MAX, PROFILE_MESSAGE_MAX_UNITS, ROOM_NAMES,
+        RoomsResponse, SendMessageRequest, SessionEvent, SessionResponse, StatusResponse,
+        TEXT_MAX_UNITS,
     },
 };
 use serde::Serialize;
@@ -95,19 +95,20 @@ const OPENAPI_PATH: &str = "/api/v1/openapi.json";
 #[openapi(
     info(
         title = "Picto Relay",
-        description = "Join a Nintendo DS PictoChat room and exchange drawings over HTTP and WebSocket.\n\nA session is one participant in one room. Create it, send drawings or text, and read events by polling or over a WebSocket. Events are `ServerEnvelope` objects whose `type` field selects the variant."
+        description = "Join a Nintendo DS PictoChat room and exchange drawings over HTTP and WebSocket.\n\nA session is one participant in one room. Create it, send drawings or text, and read events by polling or over a WebSocket. Events are `SessionEvent` objects whose `type` field selects the variant."
     ),
     paths(
         api_status,
         api_rooms,
         websocket_rooms,
         create_api_session,
+        get_api_session,
         delete_api_session,
         send_api_message,
         poll_api_events,
         websocket_api_events,
     ),
-    components(schemas(ServerEnvelope, RoomsResponse)),
+    components(schemas(SessionEvent, RoomsResponse)),
     tags(
         (name = TAG_GATEWAY, description = "What this gateway is and what it accepts"),
         (name = TAG_ROOMS, description = "Who is in rooms A through D"),
@@ -160,7 +161,7 @@ struct Cli {
 
 #[derive(Clone, Debug, Default)]
 struct ApiSessions {
-    events: Arc<Mutex<BTreeMap<ClientId, Option<mpsc::Receiver<ServerEnvelope>>>>>,
+    events: Arc<Mutex<BTreeMap<ClientId, Option<mpsc::Receiver<SessionEvent>>>>>,
 }
 
 #[derive(Debug)]
@@ -185,7 +186,6 @@ impl IntoResponse for ApiError {
         (
             self.status,
             Json(ErrorResponse {
-                version: PROTOCOL_VERSION,
                 code: self.code,
                 message: self.message,
             }),
@@ -251,7 +251,10 @@ fn app(broker: BrokerHandle, backend: &'static str, default_room: u8) -> Router 
         .route("/api/v1/rooms", get(api_rooms))
         .route("/api/v1/rooms/ws", get(websocket_rooms))
         .route("/api/v1/sessions", post(create_api_session))
-        .route("/api/v1/sessions/{session_id}", delete(delete_api_session))
+        .route(
+            "/api/v1/sessions/{session_id}",
+            get(get_api_session).delete(delete_api_session),
+        )
         .route(
             "/api/v1/sessions/{session_id}/messages",
             post(send_api_message),
@@ -296,8 +299,8 @@ async fn web_client(uri: Uri) -> Response {
 
 /// Describe the gateway
 ///
-/// Reports the active radio backend and the drawing contract: bitmap sizes and
-/// encodings, text and profile limits, accepted ink indices and the drawable area.
+/// Reports the active radio backend and the drawing contract: bitmap sizes,
+/// text and profile limits, accepted ink indices and the drawable area.
 #[utoipa::path(
     get,
     operation_id = "getStatus",
@@ -308,19 +311,15 @@ async fn web_client(uri: Uri) -> Response {
 async fn api_status(State(state): State<AppState>) -> Json<StatusResponse> {
     Json(StatusResponse {
         ink_indices: INK_INDICES,
-        rainbow_text: true,
         text_max_units: TEXT_MAX_UNITS,
         profile_message_max_units: PROFILE_MESSAGE_MAX_UNITS,
         profile_color_max: PROFILE_COLOR_MAX,
         drawable_regions: DRAWABLE_REGIONS,
-        version: PROTOCOL_VERSION,
         backend: state.backend,
         bitmap_width: CANVAS_WIDTH,
         bitmap_height: CANVAS_HEIGHT,
         bitmap_bytes: BITMAP_BYTES,
-        bitmap_encoding: "base64_row_major_mono_1bpp_msb_first",
         palette_bitmap_bytes: PALETTE_BITMAP_BYTES,
-        palette_bitmap_encoding: "base64_row_major_indexed_4bpp_low_nibble_first",
     })
 }
 
@@ -340,7 +339,6 @@ async fn api_status(State(state): State<AppState>) -> Json<StatusResponse> {
 )]
 async fn api_rooms(State(state): State<AppState>) -> Result<Json<RoomsResponse>, ApiError> {
     Ok(Json(RoomsResponse {
-        version: PROTOCOL_VERSION,
         rooms: state.broker.rooms().await?,
     }))
 }
@@ -369,7 +367,6 @@ async fn push_room_updates(
     mut rooms: tokio::sync::watch::Receiver<Vec<picto_relay_server::protocol::RoomSummary>>,
 ) {
     let initial = RoomsResponse {
-        version: PROTOCOL_VERSION,
         rooms: rooms.borrow_and_update().clone(),
     };
     if !send_websocket_json(&mut socket, &initial).await {
@@ -382,7 +379,6 @@ async fn push_room_updates(
                     break;
                 }
                 let update = RoomsResponse {
-                    version: PROTOCOL_VERSION,
                     rooms: rooms.borrow_and_update().clone(),
                 };
                 if !send_websocket_json(&mut socket, &update).await {
@@ -406,7 +402,7 @@ async fn push_room_updates(
 
 /// Stream session events (WebSocket)
 ///
-/// Upgrades to a WebSocket. Each event is one `ServerEnvelope` as a JSON text
+/// Upgrades to a WebSocket. Each event is one `SessionEvent` as a JSON text
 /// frame. A session has one event consumer: while a WebSocket is attached,
 /// polling returns 409, and a second WebSocket is refused.
 #[utoipa::path(
@@ -416,7 +412,7 @@ async fn push_room_updates(
     tag = TAG_SESSIONS,
     params(("session_id" = u64, Path, description = "Identifier returned when the session was created")),
     responses(
-        (status = 101, description = "Switching to WebSocket; text frames are `ServerEnvelope` JSON"),
+        (status = 101, description = "Switching to WebSocket; text frames are `SessionEvent` JSON"),
         (status = 404, description = "No such session", body = ErrorResponse),
         (status = 409, description = "Another WebSocket already consumes this session", body = ErrorResponse),
     )
@@ -546,11 +542,52 @@ async fn create_api_session(
     Ok((
         StatusCode::CREATED,
         Json(CreateSessionResponse {
-            version: PROTOCOL_VERSION,
             session_id: session_id.0,
             room,
         }),
     ))
+}
+
+/// Inspect a session
+///
+/// Reports the room the session is in and everyone it has seen there. People
+/// who have left stay in the list with `active` set to `false`.
+#[utoipa::path(
+    get,
+    operation_id = "getSession",
+    path = "/api/v1/sessions/{session_id}",
+    tag = TAG_SESSIONS,
+    params(("session_id" = u64, Path, description = "Identifier returned when the session was created")),
+    responses(
+        (status = 200, description = "The session's room and users", body = SessionResponse),
+        (status = 404, description = "No such session", body = ErrorResponse),
+        (status = 503, description = "The broker is unavailable or busy", body = ErrorResponse),
+    )
+)]
+async fn get_api_session(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<u32>,
+) -> Result<Json<SessionResponse>, ApiError> {
+    let session_id = ClientId(session_id);
+    if !state
+        .api_sessions
+        .events
+        .lock()
+        .await
+        .contains_key(&session_id)
+    {
+        return Err(unknown_session(session_id));
+    }
+    let session = state
+        .broker
+        .inspect(session_id)
+        .await?
+        .ok_or_else(|| unknown_session(session_id))?;
+    Ok(Json(SessionResponse {
+        room: session.room,
+        room_letter: ROOM_NAMES[usize::from(session.room)],
+        users: session.users,
+    }))
 }
 
 /// Leave the room
@@ -585,10 +622,10 @@ async fn delete_api_session(
 
 /// Send a drawing or text
 ///
-/// Queues one message. Supply exactly one of `text` (rendered by the server,
-/// optionally with `ink`), `bitmap` (1 bit per pixel) or `palette_bitmap`
-/// (4 bits per pixel). Delivery is reported later as a `delivered` or
-/// `delivery_timed_out` event.
+/// Queues one message. Supply exactly one of `text` (drawn by the server in
+/// the DS font, optionally with `ink`), `bitmap` (1 bit per pixel) or
+/// `palette_bitmap` (4 bits per pixel). Delivery is reported later as a
+/// `delivered` or `delivery_timed_out` event.
 #[utoipa::path(
     post,
     operation_id = "sendMessage",
@@ -597,7 +634,7 @@ async fn delete_api_session(
     params(("session_id" = u64, Path, description = "Identifier returned when the session was created")),
     request_body = SendMessageRequest,
     responses(
-        (status = 202, description = "Message queued", body = AcceptedResponse),
+        (status = 202, description = "Message queued"),
         (status = 404, description = "No such session", body = ErrorResponse),
         (status = 422, description = "Invalid text, ink or bitmap", body = ErrorResponse),
         (status = 503, description = "The backend is unavailable or its queue is full", body = ErrorResponse),
@@ -607,7 +644,7 @@ async fn send_api_message(
     State(state): State<AppState>,
     AxumPath(session_id): AxumPath<u32>,
     Json(request): Json<SendMessageRequest>,
-) -> Result<(StatusCode, Json<AcceptedResponse>), ApiError> {
+) -> Result<StatusCode, ApiError> {
     let session_id = ClientId(session_id);
     if !state
         .api_sessions
@@ -666,13 +703,7 @@ async fn send_api_message(
         bitmap
     };
     state.broker.send_message(session_id, bitmap)?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(AcceptedResponse {
-            version: PROTOCOL_VERSION,
-            status: "queued",
-        }),
-    ))
+    Ok(StatusCode::ACCEPTED)
 }
 
 /// Poll session events
@@ -718,10 +749,7 @@ async fn poll_api_events(
             }
         }
     }
-    Ok(Json(EventsResponse {
-        version: PROTOCOL_VERSION,
-        events,
-    }))
+    Ok(Json(EventsResponse { events }))
 }
 
 fn unknown_session(session_id: ClientId) -> ApiError {
@@ -791,7 +819,7 @@ mod tests {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use picto_relay_server::{
         broker::BrokerHandle,
-        protocol::{BITMAP_BYTES, PALETTE_BITMAP_BYTES, PROTOCOL_VERSION},
+        protocol::{BITMAP_BYTES, PALETTE_BITMAP_BYTES},
     };
     use serde_json::{Value, json};
     use tower::ServiceExt as _;
@@ -831,9 +859,13 @@ mod tests {
             assert!(paths.contains_key(path), "{path} is not documented");
         }
         assert_eq!(paths.len(), 8);
+        let session = paths["/api/v1/sessions/{session_id}"].as_object().unwrap();
+        assert!(session.contains_key("get") && session.contains_key("delete"));
         // Every event variant is distinguishable by its `type` tag.
-        let events = &document["components"]["schemas"]["ServerWireEvent"]["oneOf"];
+        let events = &document["components"]["schemas"]["SessionEvent"]["oneOf"];
         assert_eq!(events.as_array().unwrap().len(), 10);
+        // The API is versioned by its path alone.
+        assert!(!document.to_string().contains("\"version\":{"));
     }
 
     fn test_app() -> Router {
@@ -1030,7 +1062,7 @@ mod tests {
                 .expect("router should answer");
             assert_eq!(poll.status(), StatusCode::OK);
             let body = response_json(poll).await;
-            assert_eq!(body["version"], PROTOCOL_VERSION);
+            assert!(body.get("version").is_none());
             event_types.extend(
                 body["events"]
                     .as_array()
@@ -1078,7 +1110,7 @@ mod tests {
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     }
     #[tokio::test]
-    async fn palette_api_preserves_indices_and_provides_legacy_bitmap() {
+    async fn palette_api_preserves_indices() {
         let app = test_app();
         send_json(
             &app,
@@ -1125,16 +1157,81 @@ mod tests {
                 .find(|event| event["type"] == "message")
             {
                 assert_eq!(event["palette_bitmap"], encoded);
-                let legacy = STANDARD.decode(event["bitmap"].as_str().unwrap()).unwrap();
-                assert_eq!(legacy.len(), BITMAP_BYTES);
-                assert_eq!(legacy[0], 0xc0);
-                assert!(legacy[1..].iter().all(|byte| *byte == 0));
+                assert!(event.get("bitmap").is_none());
                 return;
             }
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
         panic!("color message was not received");
     }
+    #[tokio::test]
+    async fn session_can_be_inspected_and_remembers_who_left() {
+        let app = test_app();
+        for name in ["Ann", "Ben"] {
+            let created = send_json(
+                &app,
+                Method::POST,
+                "/api/v1/sessions",
+                json!({"name": name, "room": 2}),
+            )
+            .await;
+            assert_eq!(created.status(), StatusCode::CREATED);
+        }
+        let inspect = |uri: &'static str| {
+            let app = app.clone();
+            async move {
+                app.oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let body = response_json(inspect("/api/v1/sessions/1").await).await;
+        assert_eq!(body["room"], 2);
+        assert_eq!(body["room_letter"], "C");
+        assert_eq!(
+            body["users"],
+            json!([
+                {"client_id": 1, "name": "Ann", "active": true},
+                {"client_id": 2, "name": "Ben", "active": true},
+            ])
+        );
+
+        let left = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/v1/sessions/2")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(left.status(), StatusCode::NO_CONTENT);
+        // The broker hears of the departure a moment after the request returns.
+        let mut users = Value::Null;
+        for _ in 0..50 {
+            users = response_json(inspect("/api/v1/sessions/1").await).await["users"].take();
+            if users[1]["active"] == false {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert_eq!(
+            users,
+            json!([
+                {"client_id": 1, "name": "Ann", "active": true},
+                {"client_id": 2, "name": "Ben", "active": false},
+            ])
+        );
+
+        assert_eq!(
+            inspect("/api/v1/sessions/2").await.status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
     #[tokio::test]
     async fn profile_message_rejects_overflow_and_embedded_nul() {
         let app = test_app();

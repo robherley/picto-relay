@@ -1,5 +1,5 @@
 import { type Dispatch, useEffect, useReducer } from "react";
-import { openStream, type Participant, type ServerEnvelope, sessionStream } from "../api/client";
+import { openStream, type Participant, type SessionEvent, sessionStream } from "../api/client";
 import { ROOM_LETTERS } from "../pictochat/constants";
 import { fromBase64, type Pixels, unpack } from "../pictochat/drawing";
 
@@ -46,7 +46,7 @@ const initial: SessionView = {
 };
 
 type Action =
-  | { type: "event"; room: number; event: ServerEnvelope }
+  | { type: "event"; room: number; event: SessionEvent }
   | { type: "connection"; connected: boolean }
   /** We sent a drawing: show it now, as a DS does, rather than on delivery. */
   | { type: "sent"; name: string; pixels: Pixels }
@@ -124,7 +124,7 @@ function reduce(view: SessionView, action: Action): SessionView {
         if (settled) return settled;
       }
       try {
-        const pixels = unpack(fromBase64(event.palette_bitmap ?? event.bitmap));
+        const pixels = unpack(fromBase64(event.palette_bitmap));
         return append(view, { kind: "message", stationId: event.station_id, name: event.name, pixels });
       } catch {
         return append(view, { kind: "notice", tone: "error", text: "Received a drawing that could not be read." });
@@ -151,7 +151,7 @@ export function useSession(
   useEffect(() => {
     if (id === undefined || room === undefined) return;
     dispatch({ type: "reset" });
-    return openStream<ServerEnvelope>(sessionStream(id), {
+    return openStream<SessionEvent>(sessionStream(id), {
       onMessage: (event) => dispatch({ type: "event", room, event }),
       onConnection: (connected) => dispatch({ type: "connection", connected }),
     });

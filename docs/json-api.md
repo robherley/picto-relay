@@ -1,13 +1,15 @@
 # Picto Relay REST API v1
 
 Base URL: `http://localhost:3001/api/v1`. The browser uses this API; WebSockets
-are optional. REST polling supports the complete session lifecycle.
+are optional. REST polling supports the complete session lifecycle. The version
+is in the path; bodies carry no version field.
 
 | Operation | Endpoint |
 |---|---|
 | Formats, limits, and drawing bounds | `GET /status` |
 | Current room counts and roster | `GET /rooms` |
 | Join with nickname, personal message, and profile color | `POST /sessions` |
+| The session's room and everyone seen in it | `GET /sessions/{id}` |
 | Send text or a drawing | `POST /sessions/{id}/messages` |
 | Drain queued events | `GET /sessions/{id}/events` |
 | Leave | `DELETE /sessions/{id}` |
@@ -33,12 +35,12 @@ openapi-generator-cli generate -i docs/openapi.json -g python -o client/
 
 Notes for generated clients:
 
-- Session events are a `ServerEnvelope`: a `version` plus one event, selected
-  by its `type` field (`session_ready`, `message`, `delivered`, ...). The same
-  shape arrives from polling and from the WebSocket.
+- A session event is a `SessionEvent`, selected by its `type` field
+  (`session_ready`, `message`, `delivered`, ...). The same shape arrives from
+  polling and from the WebSocket.
 - OpenAPI cannot describe WebSocket messages. The two `/ws` endpoints are
   listed with a `101` response; their text frames are `RoomsResponse` and
-  `ServerEnvelope` JSON, both defined in the schema.
+  `SessionEvent` JSON, both defined in the schema.
 - Identifiers are unsigned 32-bit values and are declared as 64-bit integers so
   typed clients do not overflow.
 
@@ -68,11 +70,10 @@ by a DS. See [firmware and USB protocol](esp32-usb.md).
 
 `GET /status` reports:
 
-- `version`, `backend`
+- `backend`
 - `bitmap_width: 256`, `bitmap_height: 96`
-- `bitmap_bytes: 3072`, `bitmap_encoding: "base64_row_major_mono_1bpp_msb_first"`
-- `palette_bitmap_bytes: 12288`, `palette_bitmap_encoding: "base64_row_major_indexed_4bpp_low_nibble_first"`
-- `ink_indices: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]`, `rainbow_text: true`
+- `bitmap_bytes: 3072`, `palette_bitmap_bytes: 12288`
+- `ink_indices: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]`
 - `text_max_units: 220`, `profile_message_max_units: 26`, `profile_color_max: 15`
 - `drawable_regions: [[80,0,172,16],[24,16,228,64]]`
 
@@ -89,7 +90,7 @@ preserved, including ink outside the suggested composer bounds.
 curl http://localhost:3001/api/v1/rooms
 ```
 
-The response contains `version: 1` and four `rooms` (0=A, 1=B, 2=C, 3=D):
+The response contains four `rooms` (0=A, 1=B, 2=C, 3=D):
 
 ```json
 {"observed":true,"room":0,"participant_count":2,"participants":[{"client_id":4083630471,"name":"Rob"},{"client_id":3209822209,"name":"Relay"}]}
@@ -111,7 +112,7 @@ curl -i -H 'content-type: application/json' \
   http://localhost:3001/api/v1/sessions
 ```
 
-Response: HTTP 201 with `{"version":1,"session_id":1,"room":0}`.
+Response: HTTP 201 with `{"session_id":1,"room":0}`.
 
 - `name`: required; whitespace is trimmed and the name normalized by the server.
 - `room`: optional, defaults to the server's `--room`; range 0–3.
@@ -135,6 +136,25 @@ Red and the full 26-letter personal message were verified on a real DS.
 Profile settings are advertised in both identity passes, separately from drawings.
 Changing them requires leaving and creating a new session. HTTP 201 allocates the
 session; the physical `session_ready` event confirms the completed profile exchange.
+
+## Inspect a session
+
+```sh
+curl http://localhost:3001/api/v1/sessions/1
+```
+
+```json
+{"room":0,"room_letter":"A","users":[
+  {"client_id":3209822209,"name":"API Relay","active":true},
+  {"client_id":4083630471,"name":"Rob","active":true},
+  {"client_id":2694480327,"name":"Bob","active":false}]}
+```
+
+`users` is everyone the session has seen in its room since it began, the
+session's own user included, in the order they were first seen. Someone who has
+left stays in the list with `active: false`, and becomes `active` again if they
+return. `client_id` is the same identity rosters use, and the `station_id` of
+that person's messages and profile.
 
 ## Send text
 
@@ -162,11 +182,16 @@ The names are how each index looks on a real DS, read from a photograph of one
 showing all sixteen indices side by side. `"rainbow"` cycles through 3 to 15 in
 that order.
 
-Text is trimmed, word-wrapped around the name-tag area, and rendered in a
-bundled 5×7 bitmap font. Explicit newlines are preserved; oversized words
-can split. The renderer tries large text, then compact text. Unsupported glyphs
-are drawn as a box. Text must contain 1–220 UTF-16 units,
-no NULs, and fit the drawing area. Rainbow text uses horizontal color bands.
+Text is drawn exactly as the web client's keyboard types it: in the DS font,
+one line of text per ruled line, the first line starting beside the name tag.
+Both draw from the same table of glyphs, so the pixels are identical. The font
+covers Latin letters, kana, common kanji, symbols and the DS pictograms; a
+character it lacks is drawn as a hollow box.
+
+Words wrap whole where they can, explicit newlines are kept, and a word longer
+than a line is split. A drawing holds five lines. Text must contain 1–220
+UTF-16 units and no NULs; text needing more than five lines is rejected with
+`invalid_text`. Rainbow text changes color every six pixels across.
 
 ## Send a drawing
 
@@ -191,8 +216,8 @@ Indices: 0 paper, and the inks listed under [Send text](#send-text). Every index
 is carried as given. RGB previews are approximate;
 wire indices are lossless. Color uses the same native radio payload size as mono.
 
-Both formats use `POST /sessions/{id}/messages`. HTTP 202 returns
-`{"version":1,"status":"queued"}`. This acknowledges queueing, not DS delivery.
+Both formats use `POST /sessions/{id}/messages`. HTTP 202, with no body,
+acknowledges queueing, not DS delivery.
 Blank physical drawings are rejected by the native encoder through error events.
 UI brush selection, erasing, and clearing are local editor actions; an API client
 implements these by changing its next bitmap. There is no shared server-side canvas.
@@ -203,14 +228,14 @@ implements these by changing its next bitmap. There is no shared server-side can
 curl http://localhost:3001/api/v1/sessions/1/events
 ```
 
-Polling drains up to 32 queued events and returns `{"version":1,"events":[...]}`.
+Polling drains up to 32 queued events and returns `{"events":[...]}`.
 Poll again when the list is empty. Examples of individual events:
 
 ```json
-{"version":1,"type":"session_ready","client_id":1}
-{"version":1,"type":"profile","station_id":4083630471,"name":"Rob","profile_message":"abcdefghijklmnopqrstuvwxyz","profile_color":11}
-{"version":1,"type":"message","station_id":4083630471,"name":"Rob","message_id":0,"bitmap":"...","palette_bitmap":"..."}
-{"version":1,"type":"delivered","message_id":0}
+{"type":"session_ready","client_id":1}
+{"type":"profile","station_id":4083630471,"name":"Rob","profile_message":"abcdefghijklmnopqrstuvwxyz","profile_color":11}
+{"type":"message","station_id":4083630471,"name":"Rob","message_id":0,"palette_bitmap":"..."}
+{"type":"delivered","message_id":0}
 ```
 
 `profile` is emitted when a physical profile is first observed or its nickname,
@@ -218,9 +243,10 @@ message, or color changes. The duplicate identity pass is suppressed. Its
 `station_id` matches the roster's `client_id` for that physical station. Profiles
 are event updates, not a historical REST profile database.
 
-Every drawing event includes legacy monochrome `bitmap` (all nonzero indices
-become black). Color messages also include lossless `palette_bitmap`; prefer that
-field when present. Text submissions arrive as rendered drawing events.
+Every drawing arrives as a `palette_bitmap`, in the format described under
+[Send a drawing](#send-a-drawing), whatever format it was sent in: a drawing
+sent as a one-bit `bitmap` comes back as black ink. Text submissions arrive as
+drawings too.
 
 Other events: `backend_state`, `participants`, `participant_joined`,
 `participant_left`, `delivery_timed_out`, and `error`. Roster snapshots are
@@ -244,7 +270,7 @@ returns to passive discovery after the worker releases the radio.
 
 ## Errors
 
-Application errors use `{"version":1,"code":"...","message":"..."}`.
+Application errors use `{"code":"...","message":"..."}`.
 Common codes include `invalid_name`, `invalid_room`, `invalid_profile_message`,
 `invalid_profile_color`, `invalid_text`, `invalid_message`, `invalid_bitmap`,
 `invalid_bitmap_size`, `unknown_session`, `session_stream_attached`, `broker_busy`,

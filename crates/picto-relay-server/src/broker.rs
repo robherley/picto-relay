@@ -9,8 +9,8 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, warn};
 
 use crate::protocol::{
-    BITMAP_BYTES, PALETTE_BITMAP_BYTES, Participant, ROOM_COUNT, RoomSummary, ServerEnvelope,
-    ServerWireEvent,
+    BITMAP_BYTES, PALETTE_BITMAP_BYTES, Participant, ROOM_COUNT, RoomSummary, SessionEvent,
+    SessionUser,
 };
 
 pub use crate::worker::DEFAULT_SERIAL_PORT;
@@ -71,7 +71,17 @@ pub struct RelaySession {
     /// Assigned virtual station identity.
     pub client_id: ClientId,
     /// Bounded stream of events for this session.
-    pub events: mpsc::Receiver<ServerEnvelope>,
+    pub events: mpsc::Receiver<SessionEvent>,
+}
+
+/// What the broker knows about one session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionInfo {
+    /// Room the session is in.
+    pub room: u8,
+    /// Everyone seen in the room since the session began, in the order they
+    /// were first seen.
+    pub users: Vec<SessionUser>,
 }
 
 /// Failures returned to an API task.
@@ -175,6 +185,19 @@ impl BrokerHandle {
         response.await.map_err(|_| BrokerError::Unavailable)
     }
 
+    /// Describes a session, or `None` if the broker has no such session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BrokerError`] if the actor is busy or unavailable.
+    pub async fn inspect(&self, client_id: ClientId) -> Result<Option<SessionInfo>, BrokerError> {
+        let (reply, response) = oneshot::channel();
+        self.commands
+            .try_send(BrokerCommand::Inspect { client_id, reply })
+            .map_err(|error| map_send_error(&error))?;
+        response.await.map_err(|_| BrokerError::Unavailable)
+    }
+
     /// Subscribes to complete room snapshots, including the current value.
     #[must_use]
     pub fn subscribe_rooms(&self) -> watch::Receiver<Vec<RoomSummary>> {
@@ -225,6 +248,10 @@ enum BrokerCommand {
     Rooms {
         reply: oneshot::Sender<Vec<RoomSummary>>,
     },
+    Inspect {
+        client_id: ClientId,
+        reply: oneshot::Sender<Option<SessionInfo>>,
+    },
     SendMessage {
         client_id: ClientId,
         bitmap: Vec<u8>,
@@ -238,8 +265,33 @@ enum BrokerCommand {
 struct ConnectedClient {
     name: String,
     room: u8,
-    events: mpsc::Sender<ServerEnvelope>,
+    events: mpsc::Sender<SessionEvent>,
     next_message_id: u32,
+    /// Everyone this session has seen in its room, present or not.
+    seen: Vec<SessionUser>,
+}
+
+/// Brings a session's record of its room up to date with who is there now:
+/// newcomers are added, and anyone no longer present is marked inactive.
+fn record_presence(seen: &mut Vec<SessionUser>, present: &[Participant]) {
+    for user in seen.iter_mut() {
+        user.active = present
+            .iter()
+            .any(|participant| participant.client_id == user.client_id);
+    }
+    for participant in present {
+        match seen
+            .iter_mut()
+            .find(|user| user.client_id == participant.client_id)
+        {
+            Some(user) => user.name.clone_from(&participant.name),
+            None => seen.push(SessionUser {
+                client_id: participant.client_id,
+                name: participant.name.clone(),
+                active: true,
+            }),
+        }
+    }
 }
 
 struct Broker {
@@ -280,6 +332,12 @@ impl Broker {
             BrokerCommand::Rooms { reply } => {
                 let _ = reply.send(room_summaries(self.clients.iter()));
             }
+            BrokerCommand::Inspect { client_id, reply } => {
+                let _ = reply.send(self.clients.get(&client_id).map(|client| SessionInfo {
+                    room: client.room,
+                    users: client.seen.clone(),
+                }));
+            }
             BrokerCommand::SendMessage { client_id, bitmap } => {
                 self.send_message(client_id, &bitmap);
             }
@@ -307,17 +365,18 @@ impl Broker {
                 room,
                 events: events.clone(),
                 next_message_id: FIRST_MESSAGE_ID,
+                seen: Vec::new(),
             },
         );
         self.send_to(
             client_id,
-            ServerWireEvent::SessionReady {
+            SessionEvent::SessionReady {
                 client_id: client_id.0,
             },
         );
         self.broadcast_to_room(
             room,
-            ServerWireEvent::ParticipantJoined {
+            &SessionEvent::ParticipantJoined {
                 room,
                 participant: joined,
             },
@@ -343,13 +402,12 @@ impl Broker {
         sender.next_message_id = sender.next_message_id.wrapping_add(1);
         let sender_name = sender.name.clone();
         let room = sender.room;
-        let message = ServerEnvelope::new(ServerWireEvent::Message {
+        let message = SessionEvent::Message {
             station_id: client_id.0,
             name: sender_name,
             message_id,
-            palette_bitmap: (bitmap.len() == PALETTE_BITMAP_BYTES).then(|| STANDARD.encode(bitmap)),
-            bitmap: STANDARD.encode(crate::bitmap::monochrome_bitmap(bitmap)),
-        });
+            palette_bitmap: STANDARD.encode(crate::bitmap::palette_bitmap(bitmap)),
+        };
         let previous_clients = self.clients.len();
         self.clients.retain(|_, client| {
             client.room != room || client.events.try_send(message.clone()).is_ok()
@@ -357,7 +415,7 @@ impl Broker {
         if self.clients.len() != previous_clients {
             self.publish_rooms();
         }
-        self.send_to(client_id, ServerWireEvent::Delivered { message_id });
+        self.send_to(client_id, SessionEvent::Delivered { message_id });
     }
 
     fn unregister(&mut self, client_id: ClientId) {
@@ -366,7 +424,7 @@ impl Broker {
         };
         self.broadcast_to_room(
             client.room,
-            ServerWireEvent::ParticipantLeft {
+            &SessionEvent::ParticipantLeft {
                 room: client.room,
                 participant: Participant {
                     client_id: client_id.0,
@@ -377,8 +435,7 @@ impl Broker {
         self.broadcast_participants(client.room);
     }
 
-    fn broadcast_to_room(&mut self, room: u8, event: ServerWireEvent) {
-        let event = ServerEnvelope::new(event);
+    fn broadcast_to_room(&mut self, room: u8, event: &SessionEvent) {
         self.clients.retain(|_, client| {
             client.room != room || client.events.try_send(event.clone()).is_ok()
         });
@@ -391,18 +448,25 @@ impl Broker {
             .filter(|(_, client)| client.room == room)
             .map(participant)
             .collect::<Vec<_>>();
-        let event = ServerEnvelope::new(ServerWireEvent::Participants { room, participants });
+        for client in self
+            .clients
+            .values_mut()
+            .filter(|client| client.room == room)
+        {
+            record_presence(&mut client.seen, &participants);
+        }
+        let event = SessionEvent::Participants { room, participants };
         self.clients.retain(|_, client| {
             client.room != room || client.events.try_send(event.clone()).is_ok()
         });
         self.publish_rooms();
     }
 
-    fn send_to(&mut self, client_id: ClientId, event: ServerWireEvent) {
+    fn send_to(&mut self, client_id: ClientId, event: SessionEvent) {
         let should_remove = self
             .clients
             .get(&client_id)
-            .is_some_and(|client| client.events.try_send(ServerEnvelope::new(event)).is_err());
+            .is_some_and(|client| client.events.try_send(event).is_err());
         if should_remove {
             self.clients.remove(&client_id);
             self.publish_rooms();
@@ -536,6 +600,17 @@ impl Esp32Broker {
             BrokerCommand::Rooms { reply } => {
                 let _ = reply.send(self.room_summaries());
             }
+            BrokerCommand::Inspect { client_id, reply } => {
+                let info =
+                    self.client
+                        .as_ref()
+                        .filter(|(id, _)| *id == client_id)
+                        .map(|(_, client)| SessionInfo {
+                            room: client.room,
+                            users: client.seen.clone(),
+                        });
+                let _ = reply.send(info);
+            }
             BrokerCommand::SendMessage { client_id, bitmap } => {
                 self.send_message(client_id, bitmap);
             }
@@ -574,6 +649,7 @@ impl Esp32Broker {
                 room,
                 events,
                 next_message_id: FIRST_MESSAGE_ID,
+                seen: Vec::new(),
             },
         ));
         let (hardware_commands, hardware_receiver) =
@@ -587,6 +663,7 @@ impl Esp32Broker {
             name: name.to_owned(),
         };
         self.participants = vec![joined.clone()];
+        self.record_presence();
         let config = self.config.clone();
         let hardware_events = self.hardware_event_sender.clone();
         let hardware_name = name.to_owned();
@@ -625,7 +702,7 @@ impl Esp32Broker {
             warn!(%error, "failed to start physical radio thread");
             return;
         }
-        self.send_to(ServerWireEvent::Participants {
+        self.send_to(SessionEvent::Participants {
             room,
             participants: self.participants.clone(),
         });
@@ -657,11 +734,11 @@ impl Esp32Broker {
                     })
             });
         if let Err(message) = result {
-            self.send_to(ServerWireEvent::Error {
+            self.send_to(SessionEvent::Error {
                 code: "hardware_unavailable",
                 message: message.into(),
             });
-            self.send_to(ServerWireEvent::DeliveryTimedOut { message_id });
+            self.send_to(SessionEvent::DeliveryTimedOut { message_id });
         }
     }
 
@@ -690,12 +767,19 @@ impl Esp32Broker {
                 p.client_id = station_id(station);
             }
         }
+        if let Some((_, client)) = &mut self.client {
+            for user in &mut client.seen {
+                if user.client_id == previous {
+                    user.client_id = station_id(station);
+                }
+            }
+        }
         self.publish_rooms();
     }
 
     fn handle_hardware_event(&mut self, event: LiveEvent) {
         let wire_event = match event {
-            LiveEvent::Profile(profile) => ServerWireEvent::Profile {
+            LiveEvent::Profile(profile) => SessionEvent::Profile {
                 station_id: station_id(profile.station),
                 name: profile.nickname,
                 profile_message: profile.message,
@@ -705,13 +789,13 @@ impl Esp32Broker {
                 self.update_station(station);
                 return;
             }
-            LiveEvent::State { state, detail } => ServerWireEvent::BackendState { state, detail },
+            LiveEvent::State { state, detail } => SessionEvent::BackendState { state, detail },
             LiveEvent::Ready { host, room, slot } => {
                 let detail = format!(
                     "joined Room {} hosted by {host} in slot {slot}",
                     char::from(FIRST_ROOM_LETTER + room)
                 );
-                self.send_to(ServerWireEvent::BackendState {
+                self.send_to(SessionEvent::BackendState {
                     state: "ready",
                     detail,
                 });
@@ -721,13 +805,13 @@ impl Esp32Broker {
                     .find(|participant| participant.client_id == station_id(self.config.station))
                     .cloned();
                 if let Some(participant) = joined {
-                    self.send_to(ServerWireEvent::ParticipantJoined { room, participant });
+                    self.send_to(SessionEvent::ParticipantJoined { room, participant });
                 }
                 if self.client.is_none() {
                     return;
                 }
                 // The identity the session has in rosters and on its messages.
-                ServerWireEvent::SessionReady {
+                SessionEvent::SessionReady {
                     client_id: station_id(self.config.station),
                 }
             }
@@ -745,7 +829,8 @@ impl Esp32Broker {
                     self.roster_initialized = true;
                 }
                 self.participants = participants;
-                ServerWireEvent::Participants {
+                self.record_presence();
+                SessionEvent::Participants {
                     room,
                     participants: self.participants.clone(),
                 }
@@ -755,35 +840,34 @@ impl Esp32Broker {
                 name,
                 message_id,
                 bitmap,
-            } => ServerWireEvent::Message {
+            } => SessionEvent::Message {
                 station_id,
                 name,
                 message_id,
-                palette_bitmap: (bitmap.len() == PALETTE_BITMAP_BYTES)
-                    .then(|| STANDARD.encode(&bitmap)),
-                bitmap: STANDARD.encode(crate::bitmap::monochrome_bitmap(&bitmap)),
+                palette_bitmap: STANDARD.encode(crate::bitmap::palette_bitmap(&bitmap)),
             },
-            LiveEvent::Delivered { message_id } => ServerWireEvent::Delivered { message_id },
+            LiveEvent::Delivered { message_id } => SessionEvent::Delivered { message_id },
             LiveEvent::DeliveryTimedOut { message_id } => {
-                ServerWireEvent::DeliveryTimedOut { message_id }
+                SessionEvent::DeliveryTimedOut { message_id }
             }
-            LiveEvent::Error { code, message } => ServerWireEvent::Error { code, message },
+            LiveEvent::Error { code, message } => SessionEvent::Error { code, message },
             LiveEvent::Left => {
                 self.hardware_running = false;
                 self.hardware_commands = None;
                 self.roster_initialized = false;
                 let room = self.client.as_ref().map(|(_, client)| client.room);
                 let participants = std::mem::take(&mut self.participants);
+                self.record_presence();
                 if let Some(room) = room {
                     for participant in participants {
-                        self.send_to(ServerWireEvent::ParticipantLeft { room, participant });
+                        self.send_to(SessionEvent::ParticipantLeft { room, participant });
                     }
-                    self.send_to(ServerWireEvent::Participants {
+                    self.send_to(SessionEvent::Participants {
                         room,
                         participants: Vec::new(),
                     });
                 }
-                ServerWireEvent::BackendState {
+                SessionEvent::BackendState {
                     state: "left",
                     detail: "physical station left the PictoChat room".into(),
                 }
@@ -791,6 +875,13 @@ impl Esp32Broker {
         };
         self.send_to(wire_event);
         self.publish_rooms();
+    }
+
+    /// Brings the session's record of its room up to date with the roster.
+    fn record_presence(&mut self) {
+        if let Some((_, client)) = &mut self.client {
+            record_presence(&mut client.seen, &self.participants);
+        }
     }
 
     fn send_participant_changes(&mut self, room: u8, participants: &[Participant]) {
@@ -816,18 +907,18 @@ impl Esp32Broker {
             .collect::<Vec<_>>();
 
         for participant in left {
-            self.send_to(ServerWireEvent::ParticipantLeft { room, participant });
+            self.send_to(SessionEvent::ParticipantLeft { room, participant });
         }
         for participant in joined {
-            self.send_to(ServerWireEvent::ParticipantJoined { room, participant });
+            self.send_to(SessionEvent::ParticipantJoined { room, participant });
         }
     }
 
-    fn send_to(&mut self, event: ServerWireEvent) {
+    fn send_to(&mut self, event: SessionEvent) {
         let should_remove = self
             .client
             .as_ref()
-            .is_some_and(|(_, client)| client.events.try_send(ServerEnvelope::new(event)).is_err());
+            .is_some_and(|(_, client)| client.events.try_send(event).is_err());
         if should_remove {
             self.client = None;
             self.shutdown_hardware();
@@ -869,7 +960,7 @@ mod tests {
     use super::{
         BITMAP_BYTES, BrokerHandle, CLIENT_EVENT_CAPACITY, ClientId, ConnectedClient, Esp32Broker,
     };
-    use crate::protocol::ServerWireEvent;
+    use crate::protocol::SessionEvent;
 
     #[tokio::test]
     async fn broker_should_deliver_message_to_two_virtual_clients() {
@@ -893,11 +984,11 @@ mod tests {
         let bob_message = receive_message(&mut bob.events).await;
         assert!(matches!(
             alice_message,
-            ServerWireEvent::Message { station_id: 1, .. }
+            SessionEvent::Message { station_id: 1, .. }
         ));
         assert!(matches!(
             bob_message,
-            ServerWireEvent::Message { station_id: 1, .. }
+            SessionEvent::Message { station_id: 1, .. }
         ));
     }
 
@@ -965,8 +1056,8 @@ mod tests {
         let event = alice.events.recv().await.expect("join should be published");
 
         assert!(matches!(
-            event.event,
-            ServerWireEvent::ParticipantJoined { participant, .. }
+            event,
+            SessionEvent::ParticipantJoined { participant, .. }
                 if participant.name == "Bob"
         ));
     }
@@ -992,8 +1083,8 @@ mod tests {
             .expect("leave should be published");
 
         assert!(matches!(
-            event.event,
-            ServerWireEvent::ParticipantLeft { participant, .. }
+            event,
+            SessionEvent::ParticipantLeft { participant, .. }
                 if participant.name == "Bob"
         ));
     }
@@ -1035,6 +1126,7 @@ mod tests {
                 room: 0,
                 events,
                 next_message_id: 0,
+                seen: Vec::new(),
             },
         ));
         let (commands, radio) = std::sync::mpsc::sync_channel(8);
@@ -1076,6 +1168,7 @@ mod tests {
                 room: 0,
                 events,
                 next_message_id: 0,
+                seen: Vec::new(),
             },
         ));
         broker.participants = vec![crate::protocol::Participant {
@@ -1102,8 +1195,8 @@ mod tests {
             .try_recv()
             .expect("physical join event should be published");
         assert!(matches!(
-            event.event,
-            ServerWireEvent::ParticipantJoined { participant, .. }
+            event,
+            SessionEvent::ParticipantJoined { participant, .. }
                 if participant.name == "Rob"
         ));
     }
@@ -1121,6 +1214,7 @@ mod tests {
                 room: 0,
                 events,
                 next_message_id: 0,
+                seen: Vec::new(),
             },
         ));
         broker.participants = vec![crate::protocol::Participant {
@@ -1138,23 +1232,23 @@ mod tests {
             .try_recv()
             .expect("physical leave event should be published");
         assert!(matches!(
-            event.event,
-            ServerWireEvent::ParticipantLeft { participant, .. }
+            event,
+            SessionEvent::ParticipantLeft { participant, .. }
                 if participant.name == "Rob"
         ));
     }
 
-    fn drain(events: &mut tokio::sync::mpsc::Receiver<crate::protocol::ServerEnvelope>) {
+    fn drain(events: &mut tokio::sync::mpsc::Receiver<SessionEvent>) {
         while events.try_recv().is_ok() {}
     }
 
     async fn receive_message(
-        events: &mut tokio::sync::mpsc::Receiver<crate::protocol::ServerEnvelope>,
-    ) -> ServerWireEvent {
+        events: &mut tokio::sync::mpsc::Receiver<SessionEvent>,
+    ) -> SessionEvent {
         loop {
             let envelope = events.recv().await.expect("broker should remain available");
-            if matches!(envelope.event, ServerWireEvent::Message { .. }) {
-                return envelope.event;
+            if matches!(envelope, SessionEvent::Message { .. }) {
+                return envelope;
             }
         }
     }

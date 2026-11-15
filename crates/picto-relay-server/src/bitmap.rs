@@ -109,48 +109,39 @@ fn api_pixel(bitmap: &[u8], x: usize, y: usize) -> u8 {
     }
 }
 
-/// Converts a decoded DS drawing to a padded API bitmap.
+/// Converts a decoded DS drawing to a padded API palette bitmap.
 #[must_use]
 pub fn native_message_to_api_bitmap(message: &PictoChatMessage) -> Vec<u8> {
-    if message.pixels().iter().any(|&pixel| pixel > BLACK_INK) {
-        let mut bitmap = vec![0; PALETTE_BITMAP_BYTES];
-        for (i, &pixel) in message.pixels().iter().enumerate() {
-            bitmap[i / PALETTE_PIXELS_PER_BYTE] |= pixel << palette_shift(i);
-        }
-        return bitmap;
-    }
-    let mut bitmap = vec![0; API_BITMAP_BYTES];
-    for y in 0..DRAWING_HEIGHT {
-        for x in 0..DRAWING_WIDTH {
-            if message.pixel(x, y).is_some_and(|pixel| pixel != PAPER_INK) {
-                bitmap[mono_byte_index(x, y)] |= mono_bit_mask(x);
-            }
-        }
+    let mut bitmap = vec![0; PALETTE_BITMAP_BYTES];
+    for (i, &pixel) in message.pixels().iter().enumerate() {
+        bitmap[i / PALETTE_PIXELS_PER_BYTE] |= pixel << palette_shift(i);
     }
     bitmap
 }
 
-/// Lossy monochrome projection for legacy API clients.
-pub fn monochrome_bitmap(bitmap: &[u8]) -> Vec<u8> {
-    if bitmap.len() == API_BITMAP_BYTES {
+/// An API bitmap of either kind as a palette bitmap, the form events carry.
+/// A one-bit bitmap becomes black ink on paper.
+#[must_use]
+pub fn palette_bitmap(bitmap: &[u8]) -> Vec<u8> {
+    if bitmap.len() == PALETTE_BITMAP_BYTES {
         return bitmap.to_vec();
     }
-    let mut mono = vec![0; API_BITMAP_BYTES];
+    let mut palette = vec![0; PALETTE_BITMAP_BYTES];
     for y in 0..API_BITMAP_HEIGHT {
         for x in 0..API_BITMAP_WIDTH {
-            if api_pixel(bitmap, x, y) != PAPER_INK {
-                mono[mono_byte_index(x, y)] |= mono_bit_mask(x);
-            }
+            let pixel = y * API_BITMAP_WIDTH + x;
+            palette[pixel / PALETTE_PIXELS_PER_BYTE] |=
+                api_pixel(bitmap, x, y) << palette_shift(pixel);
         }
     }
-    mono
+    palette
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn palette_round_trip_preserves_every_index_and_legacy_projection() {
+    fn palette_round_trip_preserves_every_index() {
         let mut palette = vec![0; PALETTE_BITMAP_BYTES];
         for i in 0u8..16 {
             palette[usize::from(i) / 2] |= i << ((i % 2) * 4);
@@ -162,7 +153,11 @@ mod tests {
                 .unwrap();
         let decoded = PictoChatMessage::parse(&encoded).unwrap();
         assert_eq!(native_message_to_api_bitmap(&decoded), palette);
-        assert_eq!(&monochrome_bitmap(&palette)[..2], &[0x7f, 0xff]);
+        assert_eq!(palette_bitmap(&palette), palette);
+        // A one-bit bitmap comes out as black ink, pixel for pixel.
+        let mut mono = vec![0; API_BITMAP_BYTES];
+        mono[0] = 0xa0;
+        assert_eq!(&palette_bitmap(&mono)[..2], &[0x01, 0x01]);
     }
 
     #[test]

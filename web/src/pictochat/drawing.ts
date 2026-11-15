@@ -18,7 +18,6 @@ export interface Point {
 const PACKED_BITS = 4;
 const PACKED_MASK = (1 << PACKED_BITS) - 1;
 const PACKED_BYTES = (WIDTH * HEIGHT) / 2;
-const MONO_BYTES = (WIDTH * HEIGHT) / 8;
 
 export function blank(): Pixels {
   return new Uint8Array(WIDTH * HEIGHT);
@@ -92,17 +91,12 @@ export function pack(pixels: Pixels): Uint8Array {
   return bytes;
 }
 
-/** Unpacks either API encoding: 4bpp palette, or 1bpp black-on-paper. */
+/** Unpacks a palette bitmap as events carry it: the inverse of `pack`. */
 export function unpack(bytes: Uint8Array): Pixels {
-  const palette = bytes.length === PACKED_BYTES;
-  if (!palette && bytes.length !== MONO_BYTES) {
-    throw new Error(`Unexpected bitmap length ${bytes.length}`);
-  }
+  if (bytes.length !== PACKED_BYTES) throw new Error(`Unexpected bitmap length ${bytes.length}`);
   const pixels = blank();
   for (let i = 0; i < pixels.length; i += 1) {
-    pixels[i] = palette
-      ? (bytes[i >> 1]! >> ((i & 1) * PACKED_BITS)) & PACKED_MASK
-      : (bytes[i >> 3]! >> (7 - (i & 7))) & 1;
+    pixels[i] = (bytes[i >> 1]! >> ((i & 1) * PACKED_BITS)) & PACKED_MASK;
   }
   return pixels;
 }
