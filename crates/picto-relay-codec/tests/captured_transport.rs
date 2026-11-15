@@ -1,134 +1,43 @@
+//! Application packets taken from captures of real DS hardware. The fixtures hold
+//! whole radio frames; these tests skip the IEEE 802.11 header, which the
+//! firmware handles, and decode what follows.
+
 use picto_relay_codec::{
-    FcsMode, MacAddress, MacFrame, MessageReassembler, MultiplayerHeader, NintendoFlow,
-    PictoChatEnvelope, PictoChatFragment, PictoChatMessage, PictoChatProfile, ReassemblyKey,
-    build_ack_frame, build_association_request, build_association_response,
-    build_authentication_request, build_authentication_response, build_client_reply_frame,
-    build_fragment_frame, build_host_command_frame, decode_nintendo_data,
+    MacAddress, MessageReassembler, NintendoFlow, PictoChatEnvelope, PictoChatFragment,
+    PictoChatMessage, PictoChatProfile, ReassemblyKey, encode_fragment_envelope,
 };
 mod support;
 
 use support::decode_hex;
 
-fn decode_data(hex: &str) -> (picto_relay_codec::NintendoData, PictoChatEnvelope) {
-    let bytes = decode_hex(hex);
-    let frame = MacFrame::parse(&bytes, FcsMode::Absent).expect("captured frame should parse");
-    assert_eq!(frame.as_bytes(), bytes);
-    let data = decode_nintendo_data(&frame).expect("Nintendo data should parse");
-    let envelope = PictoChatEnvelope::parse(data.flow, &data.payload)
-        .expect("PictoChat envelope should parse");
-    (data, envelope)
-}
+/// Bytes in the IEEE 802.11 header of a captured data frame.
+const MAC_HEADER_BYTES: usize = 24;
+/// Bytes of reply window and client mask that open a host poll's body.
+const POLL_HEADER_BYTES: usize = 4;
 
-#[test]
-fn association_request_should_match_captured_nintendo_shape() {
-    let station = MacAddress([0x00, 0x16, 0x56, 0x4d, 0x27, 0xca]);
-    let host = MacAddress([0x00, 0x24, 0xf3, 0x67, 0x41, 0x87]);
-    let frame = build_association_request(station, host, 0, 4, 1, false);
-    assert_eq!(
-        frame,
-        decode_hex(
-            "0010a2000024f36741870016564d27ca0024f36741871000210001000020\
-             000000000400000000000000000000000000000000000000000000000000000001028284"
-        )
-    );
-}
-
-#[test]
-fn authentication_request_should_use_open_system_sequence_one() {
-    let station = MacAddress([0x02, 0x09, 0, 0, 0, 1]);
-    let host = MacAddress([0x00, 0x24, 0xf3, 0x67, 0x41, 0x87]);
-    let frame = build_authentication_request(station, host, 0, false);
-    let parsed = MacFrame::parse(&frame, FcsMode::Absent).expect("request should parse");
-    assert_eq!(parsed.header.frame_control.0, 0x10b0);
-    let body = picto_relay_codec::parse_management(&parsed).expect("body should parse");
-    let picto_relay_codec::ManagementBody::Authentication(authentication) = body else {
-        panic!("request should be authentication");
+/// The application envelope carried by a captured frame, and its bytes.
+fn envelope(hex: &str, flow: NintendoFlow) -> (PictoChatEnvelope, Vec<u8>) {
+    let frame = decode_hex(hex);
+    let start = match flow {
+        NintendoFlow::ClientToHost => MAC_HEADER_BYTES,
+        NintendoFlow::HostToClient => MAC_HEADER_BYTES + POLL_HEADER_BYTES,
     };
-    assert_eq!((authentication.algorithm, authentication.sequence), (0, 1));
+    let bytes = frame[start..].to_vec();
+    let envelope = PictoChatEnvelope::parse(flow, &bytes).expect("PictoChat envelope should parse");
+    (envelope, bytes)
 }
 
 #[test]
-fn authentication_response_should_match_captured_host_shape() {
-    let host = MacAddress([0x00, 0x24, 0xf3, 0x67, 0x41, 0x87]);
-    let station = MacAddress([0x00, 0x25, 0xa0, 0xdc, 0x81, 0xdf]);
-
-    assert_eq!(
-        build_authentication_response(host, station, 0x60d),
-        decode_hex("b000a2000025a0dc81df0024f36741870024f3674187d060000002000000")
-    );
-}
-
-#[test]
-fn association_response_should_match_captured_host_shape() {
-    let host = MacAddress([0x00, 0x24, 0xf3, 0x67, 0x41, 0x87]);
-    let station = MacAddress([0x00, 0x25, 0xa0, 0xdc, 0x81, 0xdf]);
-
-    assert_eq!(
-        build_association_response(host, station, 1, 0x60e),
-        decode_hex("1000a2000025a0dc81df0024f36741870024f3674187e0602100000001c001028284")
-    );
-}
-
-#[test]
-fn idle_client_reply_should_match_captured_nintendo_shape() {
-    let station = MacAddress([0x00, 0x16, 0x56, 0x4d, 0x27, 0xca]);
-    let host = MacAddress([0x00, 0x24, 0xf3, 0x67, 0x41, 0x87]);
-    assert_eq!(
-        build_client_reply_frame(station, host, 3, &[0, 0x80]),
-        decode_hex("1811fe030024f36741870016564d27ca0309bf00001030000080")
-    );
-}
-
-#[test]
-fn idle_host_command_should_match_captured_mac_shape() {
-    let host = MacAddress([0x00, 0x24, 0xf3, 0x67, 0x41, 0x87]);
-    let frame = build_host_command_frame(host, host, 0x10, 998, 2, &[0, 0]);
-
-    assert_eq!(
-        frame,
-        decode_hex("2802e0040309bf0000000024f36741870024f36741870001e60302000000")
-    );
-}
-
-#[test]
-fn host_acknowledgement_should_match_captured_mac_shape() {
-    let host = MacAddress([0x00, 0x24, 0xf3, 0x67, 0x41, 0x87]);
-
-    assert_eq!(
-        build_ack_frame(host, host, 0x611, 0x00a9, 0),
-        decode_hex("180200000309bf0000030024f36741870024f36741871061a9000000")
-    );
-}
-
-#[test]
-fn captured_client_fragment_should_decode_all_protocol_layers() {
-    let bytes = include_str!("fixtures/client-first-fragment.hex");
-    let raw = decode_hex(bytes);
-    let frame = MacFrame::parse(&raw, FcsMode::Absent).expect("captured frame should parse");
-    assert!(frame.header.frame_control.to_ds());
-    assert_eq!(
-        frame.header.address_1,
-        MacAddress([0x00, 0x24, 0xf3, 0x67, 0x41, 0x87])
-    );
-    assert_eq!(
-        frame.header.address_3,
-        Some(MacAddress([0x03, 0x09, 0xbf, 0, 0, 0x10]))
-    );
-
-    let (data, envelope) = decode_data(bytes);
-    assert_eq!(data.flow, NintendoFlow::ClientToHost);
-    assert_eq!(data.multiplayer, MultiplayerHeader::ClientReply);
-    assert_eq!(
-        data.source,
-        MacAddress([0x00, 0x16, 0x56, 0x4d, 0x27, 0xca])
-    );
+fn captured_client_fragment_should_decode() {
+    let flow = NintendoFlow::ClientToHost;
+    let (envelope, _) = envelope(include_str!("fixtures/client-first-fragment.hex"), flow);
     assert_eq!(envelope.packet_id, 0x8e56);
     assert_eq!(envelope.packet_sequence, 2);
     assert_eq!(envelope.declared_length, 172);
     assert_eq!(envelope.payload.len(), 170);
 
-    let fragment = PictoChatFragment::parse(&envelope.payload, data.flow)
-        .expect("captured fragment should parse");
+    let fragment =
+        PictoChatFragment::parse(&envelope.payload, flow).expect("captured fragment should parse");
     assert_eq!(fragment.opaque_header, [0x01, 0x6c]);
     assert!(!fragment.final_fragment);
     assert_eq!(fragment.data_offset, 0);
@@ -138,20 +47,13 @@ fn captured_client_fragment_should_decode_all_protocol_layers() {
 }
 
 #[test]
-fn captured_host_rebroadcast_should_decode_multiplayer_prefix_and_trailer() {
-    let (data, envelope) = decode_data(include_str!("fixtures/host-first-fragment.hex"));
-    assert_eq!(data.flow, NintendoFlow::HostToClient);
-    assert_eq!(
-        data.multiplayer,
-        MultiplayerHeader::HostCommand {
-            client_time: 998,
-            client_mask: 2
-        }
-    );
+fn captured_host_rebroadcast_should_decode_its_trailer() {
+    let flow = NintendoFlow::HostToClient;
+    let (envelope, _) = envelope(include_str!("fixtures/host-first-fragment.hex"), flow);
     assert_eq!(envelope.packet_id, 0x1e56);
     assert_eq!(envelope.declared_length, 172);
-    let fragment = PictoChatFragment::parse(&envelope.payload, data.flow)
-        .expect("captured fragment should parse");
+    let fragment =
+        PictoChatFragment::parse(&envelope.payload, flow).expect("captured fragment should parse");
     assert_eq!(fragment.data.len(), 160);
     assert_eq!(fragment.frame_number, 6);
     assert_eq!(fragment.host_trailer, Some(2));
@@ -177,27 +79,12 @@ fn captured_profile_should_trim_full_width_nickname_padding() {
 }
 
 #[test]
-fn captured_ack_should_decode_command_counter() {
-    let bytes = decode_hex(include_str!("fixtures/host-ack.hex"));
-    let frame = MacFrame::parse(&bytes, FcsMode::Absent).expect("captured ack should parse");
-    let data = decode_nintendo_data(&frame).expect("captured ack should decode");
-    assert_eq!(data.flow, NintendoFlow::HostAcknowledgement);
-    assert_eq!(
-        data.multiplayer,
-        MultiplayerHeader::HostAcknowledgement {
-            command_count: 221,
-            failed_client_mask: 0,
-        }
-    );
-    assert!(data.payload.is_empty());
-}
-
-#[test]
 fn captured_final_fragment_should_use_explicit_marker() {
-    let (data, envelope) = decode_data(include_str!("fixtures/client-final-fragment.hex"));
+    let flow = NintendoFlow::ClientToHost;
+    let (envelope, _) = envelope(include_str!("fixtures/client-final-fragment.hex"), flow);
     assert_eq!(envelope.packet_id, 0x8e08);
     assert_eq!(envelope.declared_length, 16);
-    let fragment = PictoChatFragment::parse(&envelope.payload, data.flow)
+    let fragment = PictoChatFragment::parse(&envelope.payload, flow)
         .expect("captured final fragment should parse");
     assert!(fragment.final_fragment);
     assert_eq!(fragment.data_offset, 0x820);
@@ -206,33 +93,27 @@ fn captured_final_fragment_should_use_explicit_marker() {
 }
 
 #[test]
-fn encoded_client_final_fragment_should_match_capture_body() {
-    let captured = include_str!("fixtures/client-final-fragment.hex");
-    let (data, envelope) = decode_data(captured);
-    let fragment = PictoChatFragment::parse(&envelope.payload, data.flow)
+fn encoded_client_final_fragment_should_match_the_capture() {
+    let flow = NintendoFlow::ClientToHost;
+    let (envelope, captured) = envelope(include_str!("fixtures/client-final-fragment.hex"), flow);
+    let fragment = PictoChatFragment::parse(&envelope.payload, flow)
         .expect("captured final fragment should parse");
-    let encoded = build_fragment_frame(
-        NintendoFlow::ClientToHost,
-        data.source,
-        data.bssid.expect("client reply should name its host"),
-        data.sequence_number,
-        data.retry,
-        &fragment,
-    )
-    .expect("captured final fragment should re-encode");
-    let encoded = MacFrame::parse(&encoded, FcsMode::Absent).expect("encoded frame should parse");
-    let captured = MacFrame::parse(&decode_hex(captured), FcsMode::Absent)
-        .expect("captured frame should parse");
-    assert_eq!(encoded.body(), captured.body());
+    let encoded =
+        encode_fragment_envelope(flow, &fragment).expect("captured fragment should re-encode");
+    assert_eq!(encoded, captured);
 }
 
 #[test]
 fn captured_host_final_fragment_should_allow_fixed_slot_padding() {
-    let (data, envelope) = decode_data(include_str!("fixtures/host-padded-final-fragment.hex"));
+    let flow = NintendoFlow::HostToClient;
+    let (envelope, _) = envelope(
+        include_str!("fixtures/host-padded-final-fragment.hex"),
+        flow,
+    );
     assert_eq!(envelope.packet_id, 0x9e56);
     assert_eq!(envelope.declared_length, 16);
     assert_eq!(envelope.payload.len(), 172);
-    let fragment = PictoChatFragment::parse(&envelope.payload, data.flow)
+    let fragment = PictoChatFragment::parse(&envelope.payload, flow)
         .expect("padded host final fragment should parse");
     assert!(fragment.final_fragment);
     assert_eq!(fragment.data_offset, 0x820);
@@ -268,6 +149,5 @@ fn complete_captured_client_message_should_reassemble_to_2084_bytes() {
     assert_eq!(message.iter().filter(|&&byte| byte != 0).count(), 19);
     let decoded = PictoChatMessage::parse(&message).expect("captured drawing should decode");
     assert_eq!(decoded.sender(), source);
-    assert_eq!(decoded.encoded_height(), 16);
     assert!(decoded.pixels().contains(&1));
 }

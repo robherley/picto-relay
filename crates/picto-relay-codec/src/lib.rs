@@ -1,40 +1,25 @@
-//! Lossless Nintendo DS local-wireless and `PictoChat` protocol structures.
+//! Nintendo `PictoChat` application packets and drawings.
 //!
-//! Verified IEEE 802.11 and Nintendo beacon fields are exposed as typed values.
-//! Fields whose meaning is not established remain opaque and round-trip without
-//! modification.
+//! Covers what the server sees over USB: application envelopes, fragments,
+//! rosters, profiles and the native drawing format. IEEE 802.11 framing is the
+//! firmware's job. Fields whose meaning is not established remain opaque.
 
-mod beacon;
-mod frame;
+mod mac;
 mod message;
 mod transport;
 
-pub use beacon::{
-    AssociationRequest, AssociationResponse, Authentication, Beacon, InformationElement,
-    ManagementBody, NintendoBeacon, PictoChatBeacon, PictoChatBeaconConfig,
-    PictoChatBeaconTemplate, build_pictochat_beacon, build_pictochat_beacon_template,
-    parse_management,
-};
-pub use frame::{
-    BROADCAST, CLIENT_ACK, CLIENT_REPLY, FcsMode, FrameControl, FrameType, HOST_TO_CLIENT,
-    MAC_ADDRESS_LEN, MacAddress, MacFrame, MacHeader, SequenceControl, build_association_request,
-    build_association_response, build_authentication_request, build_authentication_response,
-    build_client_reply_frame, build_data_frame, build_management_frame,
-};
+pub use mac::{MAC_ADDRESS_LEN, MacAddress};
 pub use message::{
-    DRAWING_BAND_BYTES, DRAWING_BAND_HEIGHT, DRAWING_HEIGHT, DRAWING_METADATA_BYTES, DRAWING_WIDTH,
-    PictoChatMessage, PixelBounds, encode_message,
+    DRAWING_BAND_HEIGHT, DRAWING_HEIGHT, DRAWING_WIDTH, PictoChatMessage, encode_message,
 };
 pub use transport::{
-    MESSAGE_FRAGMENT_PAYLOAD_BYTES, MessageReassembler, MultiplayerHeader, NintendoData,
-    NintendoFlow, PictoChatEnvelope, PictoChatFragment, PictoChatProfile, PictoChatRoster,
-    ReassemblyKey, build_ack_frame, build_fragment_frame, build_host_command_frame,
-    decode_nintendo_data, encode_fragment_envelope, fragment_payload, fragment_payload_starting_at,
+    MessageReassembler, NintendoFlow, PictoChatEnvelope, PictoChatFragment, PictoChatProfile,
+    PictoChatRoster, ReassemblyKey, encode_fragment_envelope, fragment_payload_starting_at,
 };
 
 use thiserror::Error;
 
-/// Errors produced while parsing or constructing wireless frames.
+/// Errors produced while parsing or constructing `PictoChat` packets.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum DecodeError {
     /// A structure is shorter than its fixed header.
@@ -47,33 +32,6 @@ pub enum DecodeError {
         /// Actual input length.
         actual: usize,
     },
-    /// An information element extends beyond the containing management frame.
-    #[error(
-        "information element at offset {offset} declares {declared} bytes with only {remaining} remaining"
-    )]
-    TruncatedInformationElement {
-        /// Offset of the element header.
-        offset: usize,
-        /// Declared element data length.
-        declared: usize,
-        /// Available bytes after the element header.
-        remaining: usize,
-    },
-    /// A management decoder received a non-management frame.
-    #[error("frame is not an IEEE 802.11 management frame")]
-    NotManagementFrame,
-    /// A Nintendo data decoder received a frame outside the known multiplayer flows.
-    #[error("frame is not a recognized Nintendo local-multiplayer data flow")]
-    NotNintendoDataFrame,
-    /// No Nintendo vendor element was present in the beacon.
-    #[error("beacon does not contain a Nintendo vendor information element")]
-    MissingNintendoBeacon,
-    /// A Nintendo vendor element has an unsupported or malformed layout.
-    #[error("Nintendo beacon data is malformed: {0}")]
-    InvalidNintendoBeacon(&'static str),
-    /// The `PictoChat` room number is outside A through D.
-    #[error("invalid PictoChat room number {0}")]
-    InvalidRoom(u8),
     /// An application envelope carries inconsistent type or length fields.
     #[error("PictoChat envelope is malformed: {0}")]
     InvalidEnvelope(&'static str),
@@ -112,8 +70,6 @@ pub(crate) fn too_short(context: &'static str, minimum: usize, actual: usize) ->
 
 /// Bytes in one little-endian 16-bit wire word (a Nintendo "halfword").
 pub(crate) const U16_BYTES: usize = size_of::<u16>();
-/// Bytes in one little-endian 32-bit wire word.
-pub(crate) const U32_BYTES: usize = size_of::<u32>();
 
 pub(crate) fn read_u16(
     data: &[u8],
@@ -124,18 +80,6 @@ pub(crate) fn read_u16(
     data.get(offset..end)
         .and_then(|bytes| <[u8; U16_BYTES]>::try_from(bytes).ok())
         .map(u16::from_le_bytes)
-        .ok_or_else(|| too_short(context, end, data.len()))
-}
-
-pub(crate) fn read_u32(
-    data: &[u8],
-    offset: usize,
-    context: &'static str,
-) -> Result<u32, DecodeError> {
-    let end = offset + U32_BYTES;
-    data.get(offset..end)
-        .and_then(|bytes| <[u8; U32_BYTES]>::try_from(bytes).ok())
-        .map(u32::from_le_bytes)
         .ok_or_else(|| too_short(context, end, data.len()))
 }
 

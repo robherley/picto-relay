@@ -536,14 +536,13 @@ isolation.
 
 | Fixture | Shape demonstrated |
 |---|---|
-| `pictochat-room-a-beacon.hex` | Historical one-user Room A beacon |
-| `joined-room-a-beacon.hex` | Captured two-user Room A beacon |
 | `client-first-fragment.hex` | To-DS client message fragment |
 | `host-first-fragment.hex` | Host rebroadcast with multiplayer prefix and trailer |
-| `host-ack.hex` | Four-byte host acknowledgement |
 | `client-final-fragment.hex` | Explicit final marker and four-byte tail |
 | `host-padded-final-fragment.hex` | Real host `0x9e56` final with 16 logical and 172 physical bytes |
 | `captured-client-transfer.hex` | All 14 fragments of the complete 2,084-byte message |
 
 These live in `crates/picto-relay-codec/tests/fixtures/` and are exercised by
-`tests/captured_transport.rs` and `tests/golden.rs`.
+`tests/captured_transport.rs`, which decodes the application packet inside each
+frame. The 802.11 header, beacons and acknowledgements are handled by the
+firmware and tested in `firmware/esp32/test/test.c`.

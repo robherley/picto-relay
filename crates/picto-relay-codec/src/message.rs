@@ -26,7 +26,7 @@ const TRANSPARENT_PALETTE_INDEX: u8 = 0;
 /// Encoded bytes covering one full-width pixel row.
 const ROW_BYTES: usize = DRAWING_WIDTH / PIXELS_PER_BYTE;
 /// Bytes used for each encoded sixteen-row drawing band.
-pub const DRAWING_BAND_BYTES: usize = DRAWING_BAND_HEIGHT * ROW_BYTES;
+const DRAWING_BAND_BYTES: usize = DRAWING_BAND_HEIGHT * ROW_BYTES;
 
 // Nintendo DS tile layout.
 
@@ -52,7 +52,7 @@ const METADATA_SENDER_END: usize = METADATA_SENDER_OFFSET + crate::MAC_ADDRESS_L
 /// Opaque metadata bytes following the sender MAC.
 const OPAQUE_METADATA_TAIL_BYTES: usize = 28;
 /// Bytes preceding the native tiled drawing payload.
-pub const DRAWING_METADATA_BYTES: usize = METADATA_SENDER_END + OPAQUE_METADATA_TAIL_BYTES;
+const DRAWING_METADATA_BYTES: usize = METADATA_SENDER_END + OPAQUE_METADATA_TAIL_BYTES;
 /// Leading nonzero part of the opaque metadata after the sender MAC, replayed verbatim
 /// from a captured client drawing; observed, meaning unknown. The rest of the opaque
 /// tail is zero.
@@ -117,24 +117,10 @@ pub fn encode_message(sender: MacAddress, pixels: &[u8]) -> Result<Vec<u8>, Deco
     Ok(message)
 }
 
-/// Inclusive bounds of nonzero pixels in a decoded drawing.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PixelBounds {
-    /// Leftmost nonzero pixel.
-    pub min_x: usize,
-    /// Topmost nonzero pixel.
-    pub min_y: usize,
-    /// Rightmost nonzero pixel.
-    pub max_x: usize,
-    /// Bottommost nonzero pixel.
-    pub max_y: usize,
-}
-
 /// Reassembled native `PictoChat` metadata and normalized 4bpp drawing pixels.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PictoChatMessage {
     metadata: [u8; DRAWING_METADATA_BYTES],
-    encoded_height: usize,
     pixels: Vec<u8>,
 }
 
@@ -162,7 +148,6 @@ impl PictoChatMessage {
         }
         let metadata = <[u8; DRAWING_METADATA_BYTES]>::try_from(metadata)
             .map_err(|_| DecodeError::InvalidMessage("metadata is truncated"))?;
-        let encoded_height = drawing.len() / ROW_BYTES;
         let mut pixels = vec![TRANSPARENT_PALETTE_INDEX; PIXEL_COUNT];
         for (byte_offset, &packed) in drawing.iter().enumerate() {
             let tile_index = byte_offset / TILE_BYTES;
@@ -176,29 +161,13 @@ impl PictoChatMessage {
             pixels[y * DRAWING_WIDTH + x] = packed & PIXEL_MASK;
             pixels[y * DRAWING_WIDTH + x + 1] = packed >> BITS_PER_PIXEL;
         }
-        Ok(Self {
-            metadata,
-            encoded_height,
-            pixels,
-        })
-    }
-
-    /// Returns the 36-byte metadata block retained from the wire.
-    #[must_use]
-    pub const fn metadata(&self) -> &[u8; DRAWING_METADATA_BYTES] {
-        &self.metadata
+        Ok(Self { metadata, pixels })
     }
 
     /// Returns the sender MAC encoded as three little-endian words in captured metadata.
     #[must_use]
     pub const fn sender(&self) -> MacAddress {
         read_word_swapped_mac(&self.metadata, METADATA_SENDER_OFFSET)
-    }
-
-    /// Returns the number of encoded drawing rows before zero-padding to 80 rows.
-    #[must_use]
-    pub const fn encoded_height(&self) -> usize {
-        self.encoded_height
     }
 
     /// Returns all normalized row-major palette indices for the 256x80 canvas.
@@ -214,39 +183,6 @@ impl PictoChatMessage {
             return None;
         }
         Some(self.pixels[y * DRAWING_WIDTH + x])
-    }
-
-    /// Finds the inclusive rectangle containing every nonzero palette index.
-    #[must_use]
-    pub fn ink_bounds(&self) -> Option<PixelBounds> {
-        let mut bounds = None;
-        for (index, &palette_index) in self.pixels.iter().enumerate() {
-            if palette_index == TRANSPARENT_PALETTE_INDEX {
-                continue;
-            }
-            let x = index % DRAWING_WIDTH;
-            let y = index / DRAWING_WIDTH;
-            bounds = Some(match bounds {
-                Some(PixelBounds {
-                    min_x,
-                    min_y,
-                    max_x,
-                    max_y,
-                }) => PixelBounds {
-                    min_x: min_x.min(x),
-                    min_y: min_y.min(y),
-                    max_x: max_x.max(x),
-                    max_y: max_y.max(y),
-                },
-                None => PixelBounds {
-                    min_x: x,
-                    min_y: y,
-                    max_x: x,
-                    max_y: y,
-                },
-            });
-        }
-        bounds
     }
 }
 
@@ -283,26 +219,9 @@ mod tests {
         let final_byte = bytes.last_mut().expect("drawing should have a final byte");
         *final_byte = 0xb4;
         let message = PictoChatMessage::parse(&bytes).expect("message should decode");
-        assert_eq!(message.encoded_height(), 80);
         assert_eq!(
             (message.pixel(254, 79), message.pixel(255, 79)),
             (Some(4), Some(11))
-        );
-    }
-
-    #[test]
-    fn ink_bounds_should_enclose_nonzero_pixels() {
-        let mut bytes = one_band_message();
-        bytes[DRAWING_METADATA_BYTES] = 0x01;
-        let message = PictoChatMessage::parse(&bytes).expect("message should decode");
-        assert_eq!(
-            message.ink_bounds(),
-            Some(PixelBounds {
-                min_x: 0,
-                min_y: 0,
-                max_x: 0,
-                max_y: 0
-            })
         );
     }
 
@@ -317,7 +236,6 @@ mod tests {
         let message = PictoChatMessage::parse(&bytes).expect("drawing should decode");
 
         assert_eq!(message.sender(), sender);
-        assert_eq!(message.encoded_height(), 16);
         assert_eq!(message.pixel(28, 12), Some(3));
         assert_eq!(message.pixel(29, 12), Some(10));
         assert_eq!(
