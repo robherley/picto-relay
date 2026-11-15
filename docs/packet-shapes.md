@@ -6,7 +6,7 @@ of the containing structure.
 
 The layouts marked **verified** were observed in the real-DS baseline and the
 canonical virtual-client outbound capture listed in
-[`captures/blueberry/README.md`](../captures/blueberry/README.md). **Standard**
+[`captures/pi/README.md`](../captures/captures.tar.gz). **Standard**
 layouts come from IEEE 802.11. **Opaque** fields are preserved but do not yet have a
 reliable meaning.
 

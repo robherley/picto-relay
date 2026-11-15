@@ -1,6 +1,6 @@
 //! Local JSON HTTP entry point for the Picto Relay gateway.
 
-use std::{collections::BTreeMap, env, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, env, net::SocketAddr, ops::RangeInclusive, sync::Arc};
 
 use anyhow::Context as _;
 use axum::{
@@ -15,14 +15,14 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use clap::{Parser, ValueEnum};
-use picto_relay_codec::MacAddress;
-use picto_relay_join::{LiveConfig, prepare_live_config};
 use picto_relay_server::{
-    broker::{BrokerError, BrokerHandle, ClientId},
+    broker::{BrokerError, BrokerHandle, ClientId, DEFAULT_SERIAL_PORT, DEFAULT_WIFI_CHANNEL},
     protocol::{
         AcceptedResponse, BITMAP_BYTES, CANVAS_HEIGHT, CANVAS_WIDTH, CreateSessionRequest,
-        CreateSessionResponse, ErrorResponse, EventsResponse, PROTOCOL_VERSION, RoomsResponse,
-        SendMessageRequest, ServerEnvelope, StatusResponse,
+        CreateSessionResponse, DRAWABLE_REGIONS, ErrorResponse, EventsResponse, INK_INDICES,
+        NAME_MAX_UNITS, PALETTE_BITMAP_BYTES, PROFILE_COLOR_MAX, PROFILE_MESSAGE_MAX_UNITS,
+        PROTOCOL_VERSION, ROOM_NAMES, RoomsResponse, SendMessageRequest, ServerEnvelope,
+        StatusResponse, TEXT_MAX_UNITS,
     },
 };
 use serde::Serialize;
@@ -31,7 +31,28 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
+// --- HTTP server -----------------------------------------------------------------
+
+/// Environment variable that overrides the listening socket address.
+const BIND_ADDRESS_ENV: &str = "PICTO_RELAY_BIND";
+
+/// Socket address listened on when `PICTO_RELAY_BIND` is unset: every
+/// interface, TCP port 3001.
+const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:3001";
+
+/// Log filter directive used when `RUST_LOG` is unset or invalid.
+const DEFAULT_LOG_FILTER: &str = "info";
+
+/// Maximum number of events returned by one polling request.
 const MAX_EVENTS_PER_POLL: usize = 32;
+
+// --- Command-line defaults ---------------------------------------------------------
+
+/// 2.4 GHz Wi-Fi channels accepted by `--channel`.
+const WIFI_CHANNEL_RANGE: RangeInclusive<i64> = 1..=14;
+
+/// Room letter joined when `--room` is omitted.
+const DEFAULT_ROOM_NAME: &str = ROOM_NAMES[0];
 
 #[derive(Clone, Debug)]
 struct AppState {
@@ -44,7 +65,7 @@ struct AppState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum Backend {
     Memory,
-    Ar9271,
+    Esp32,
 }
 
 #[derive(Debug, Parser)]
@@ -57,41 +78,17 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = Backend::Memory)]
     backend: Backend,
 
-    /// Dedicated AR9271 interface used for hardware acknowledgements.
-    #[arg(long, default_value = "wlan1")]
-    interface: String,
+    /// USB serial device for the ESP32 backend.
+    #[arg(long, default_value = DEFAULT_SERIAL_PORT)]
+    serial: String,
 
-    /// Prepare managed and monitor interfaces before joining.
-    #[arg(long)]
-    prepare: bool,
-
-    /// 2.4 GHz channel carrying the `PictoChat` room.
-    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=14))]
+    /// Preferred 2.4 GHz channel, scanned first when discovering a room.
+    #[arg(long, default_value_t = DEFAULT_WIFI_CHANNEL, value_parser = clap::value_parser!(u8).range(WIFI_CHANNEL_RANGE))]
     channel: u8,
 
     /// `PictoChat` room: A, B, C, or D.
-    #[arg(long, default_value = "A", value_parser = parse_room)]
+    #[arg(long, default_value = DEFAULT_ROOM_NAME, value_parser = parse_room)]
     room: u8,
-
-    /// Nintendo-OUI MAC address used by the virtual station.
-    #[arg(long, default_value = "00:09:bf:52:00:01", value_parser = parse_mac)]
-    station: MacAddress,
-
-    /// Seconds to wait for a matching room beacon.
-    #[arg(long, default_value_t = 60)]
-    scan_timeout: u64,
-
-    /// Milliseconds to wait for each management response.
-    #[arg(long, default_value_t = 750)]
-    response_timeout_ms: u64,
-
-    /// Authentication and association attempts.
-    #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u8).range(1..=10))]
-    attempts: u8,
-
-    /// Optional radiotap capture path for the physical backend.
-    #[arg(long)]
-    capture: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -146,31 +143,20 @@ impl From<BrokerError> for ApiError {
 async fn main() -> anyhow::Result<()> {
     let options = Cli::parse();
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| DEFAULT_LOG_FILTER.into()),
+        )
         .init();
 
     let (broker, backend) = match options.backend {
         Backend::Memory => (BrokerHandle::spawn_memory(), "memory"),
-        Backend::Ar9271 => {
-            let config = LiveConfig {
-                interface: options.interface,
-                prepare: options.prepare,
-                channel: options.channel,
-                room: Some(options.room),
-                station: options.station,
-                scan_timeout: std::time::Duration::from_secs(options.scan_timeout),
-                response_timeout: std::time::Duration::from_millis(options.response_timeout_ms),
-                attempts: options.attempts,
-                capture: options.capture,
-            };
-            let config = tokio::task::spawn_blocking(move || prepare_live_config(config))
-                .await
-                .context("radio preparation task failed")??;
-            (BrokerHandle::spawn_live(config), "ar9271")
-        }
+        Backend::Esp32 => (
+            BrokerHandle::spawn_esp32(options.serial, options.channel),
+            "esp32",
+        ),
     };
     let app = app(broker, backend, options.room);
-    let address = env::var("PICTO_RELAY_BIND").unwrap_or_else(|_| "0.0.0.0:3001".into());
+    let address = env::var(BIND_ADDRESS_ENV).unwrap_or_else(|_| DEFAULT_BIND_ADDRESS.into());
     let address: SocketAddr = address
         .parse()
         .context("invalid PICTO_RELAY_BIND address")?;
@@ -228,18 +214,30 @@ async fn stylesheet() -> impl IntoResponse {
 async fn javascript() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-        include_str!("../assets/app.js"),
+        format!(
+            "\"use strict\";\nconst GLYPHS = Object.freeze({});\n{}",
+            include_str!("../assets/font.json"),
+            include_str!("../assets/app.js")
+        ),
     )
 }
 
 async fn api_status(State(state): State<AppState>) -> Json<StatusResponse> {
     Json(StatusResponse {
+        ink_indices: INK_INDICES,
+        rainbow_text: true,
+        text_max_units: TEXT_MAX_UNITS,
+        profile_message_max_units: PROFILE_MESSAGE_MAX_UNITS,
+        profile_color_max: PROFILE_COLOR_MAX,
+        drawable_regions: DRAWABLE_REGIONS,
         version: PROTOCOL_VERSION,
         backend: state.backend,
         bitmap_width: CANVAS_WIDTH,
         bitmap_height: CANVAS_HEIGHT,
         bitmap_bytes: BITMAP_BYTES,
         bitmap_encoding: "base64_row_major_mono_1bpp_msb_first",
+        palette_bitmap_bytes: PALETTE_BITMAP_BYTES,
+        palette_bitmap_encoding: "base64_row_major_indexed_4bpp_low_nibble_first",
     })
 }
 
@@ -376,7 +374,26 @@ async fn create_api_session(
         ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "invalid_name", message)
     })?;
     let room = request.room.unwrap_or(state.default_room);
-    let session = state.broker.register(name, room).await?;
+    if request.profile_message.encode_utf16().count() > PROFILE_MESSAGE_MAX_UNITS
+        || request.profile_message.contains('\0')
+    {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_profile_message",
+            "Profile message must be at most 26 UTF-16 units and contain no NUL characters",
+        ));
+    }
+    if request.profile_color > PROFILE_COLOR_MAX {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_profile_color",
+            "Profile color must be between 0 and 15",
+        ));
+    }
+    let session = state
+        .broker
+        .register_with_profile(name, room, request.profile_message, request.profile_color)
+        .await?;
     let session_id = session.client_id;
     state
         .api_sessions
@@ -428,13 +445,53 @@ async fn send_api_message(
     {
         return Err(unknown_session(session_id));
     }
-    let bitmap = STANDARD.decode(request.bitmap).map_err(|error| {
-        ApiError::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "invalid_bitmap",
-            error.to_string(),
-        )
-    })?;
+    let bitmap = if let Some(text) = request.text {
+        if !request.bitmap.is_empty() || request.palette_bitmap.is_some() {
+            return Err(ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_message",
+                "Supply text, bitmap, or palette_bitmap, not multiple formats",
+            ));
+        }
+        picto_relay_server::text::render(&text, &request.ink.unwrap_or_default()).map_err(
+            |message| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "invalid_text", message),
+        )?
+    } else {
+        if request.ink.is_some() {
+            return Err(ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_message",
+                "Ink applies only to text; bitmaps already encode their ink",
+            ));
+        }
+        if request.palette_bitmap.is_some() && !request.bitmap.is_empty() {
+            return Err(ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_bitmap",
+                "Supply either bitmap or palette_bitmap, not both",
+            ));
+        }
+        let (encoded, expected) = request
+            .palette_bitmap
+            .map_or((request.bitmap, BITMAP_BYTES), |data| {
+                (data, PALETTE_BITMAP_BYTES)
+            });
+        let bitmap = STANDARD.decode(encoded).map_err(|error| {
+            ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_bitmap",
+                error.to_string(),
+            )
+        })?;
+        if bitmap.len() != expected {
+            return Err(ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_bitmap_size",
+                format!("Expected {expected} bytes, received {}", bitmap.len()),
+            ));
+        }
+        bitmap
+    };
     state.broker.send_message(session_id, bitmap)?;
     Ok((
         StatusCode::ACCEPTED,
@@ -498,7 +555,7 @@ fn session_stream_attached(session_id: ClientId) -> ApiError {
 
 fn normalized_name(name: &str) -> Result<String, &'static str> {
     let name = name.trim();
-    if name.is_empty() || name.encode_utf16().count() > 10 {
+    if name.is_empty() || name.encode_utf16().count() > NAME_MAX_UNITS {
         return Err("name must contain 1 to 10 UTF-16 code units");
     }
     if name.chars().any(char::is_control) {
@@ -508,26 +565,12 @@ fn normalized_name(name: &str) -> Result<String, &'static str> {
 }
 
 fn parse_room(value: &str) -> Result<u8, String> {
-    match value.trim().to_ascii_uppercase().as_str() {
-        "A" => Ok(0),
-        "B" => Ok(1),
-        "C" => Ok(2),
-        "D" => Ok(3),
-        _ => Err("room must be A, B, C, or D".into()),
-    }
-}
-
-fn parse_mac(value: &str) -> Result<MacAddress, String> {
-    let octets = value
-        .split(':')
-        .map(|octet| u8::from_str_radix(octet, 16).map_err(|_| "invalid MAC address".to_owned()))
-        .collect::<Result<Vec<_>, _>>()?;
-    let octets = <[u8; 6]>::try_from(octets)
-        .map_err(|_| "MAC address must contain six octets".to_owned())?;
-    if octets[0] & 1 != 0 {
-        return Err("station MAC must be unicast".into());
-    }
-    Ok(MacAddress(octets))
+    let letter = value.trim().to_ascii_uppercase();
+    ROOM_NAMES
+        .iter()
+        .position(|name| *name == letter)
+        .and_then(|room| u8::try_from(room).ok())
+        .ok_or_else(|| "room must be A, B, C, or D".into())
 }
 
 const fn error_code(error: BrokerError) -> &'static str {
@@ -558,7 +601,7 @@ mod tests {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use picto_relay_server::{
         broker::BrokerHandle,
-        protocol::{BITMAP_BYTES, PROTOCOL_VERSION},
+        protocol::{BITMAP_BYTES, PALETTE_BITMAP_BYTES, PROTOCOL_VERSION},
     };
     use serde_json::{Value, json};
     use tower::ServiceExt as _;
@@ -796,5 +839,171 @@ mod tests {
             .await
             .expect("router should answer");
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    }
+    #[tokio::test]
+    async fn palette_api_preserves_indices_and_provides_legacy_bitmap() {
+        let app = test_app();
+        send_json(
+            &app,
+            Method::POST,
+            "/api/v1/sessions",
+            json!({"name":"Color", "room":0}),
+        )
+        .await;
+        let mut pixels = vec![0; PALETTE_BITMAP_BYTES];
+        pixels[0] = 0xf3;
+        let encoded = STANDARD.encode(pixels);
+        for invalid in [
+            json!({"palette_bitmap":"AA=="}),
+            json!({"palette_bitmap":encoded,"bitmap":"AA=="}),
+        ] {
+            let response =
+                send_json(&app, Method::POST, "/api/v1/sessions/1/messages", invalid).await;
+            assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        }
+        let response = send_json(
+            &app,
+            Method::POST,
+            "/api/v1/sessions/1/messages",
+            json!({"palette_bitmap":encoded}),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        for _ in 0..20 {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v1/sessions/1/events")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let body = response_json(response).await;
+            if let Some(event) = body["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|event| event["type"] == "message")
+            {
+                assert_eq!(event["palette_bitmap"], encoded);
+                let legacy = STANDARD.decode(event["bitmap"].as_str().unwrap()).unwrap();
+                assert_eq!(legacy.len(), BITMAP_BYTES);
+                assert_eq!(legacy[0], 0xc0);
+                assert!(legacy[1..].iter().all(|byte| *byte == 0));
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        panic!("color message was not received");
+    }
+    #[tokio::test]
+    async fn profile_message_rejects_overflow_and_embedded_nul() {
+        let app = test_app();
+        for message in ["a".repeat(27), "a\0b".into(), "😀".repeat(14)] {
+            let response = send_json(
+                &app,
+                Method::POST,
+                "/api/v1/sessions",
+                json!({"name":"Relay", "profile_message":message}),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        }
+        let response = send_json(
+            &app,
+            Method::POST,
+            "/api/v1/sessions",
+            json!({"name":"Relay", "profile_message":"abcdefghijklmnopqrstuvwxyz"}),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+    #[tokio::test]
+    async fn profile_color_validates_ds_palette_range() {
+        let app = test_app();
+        let invalid = send_json(
+            &app,
+            Method::POST,
+            "/api/v1/sessions",
+            json!({"name":"Relay", "profile_color":16}),
+        )
+        .await;
+        assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let valid = send_json(
+            &app,
+            Method::POST,
+            "/api/v1/sessions",
+            json!({"name":"Relay", "profile_color":15}),
+        )
+        .await;
+        assert_eq!(valid.status(), StatusCode::CREATED);
+    }
+    #[tokio::test]
+    async fn rest_text_sends_colored_bitmap_and_rejects_ambiguous_payloads() {
+        let app = test_app();
+        send_json(
+            &app,
+            Method::POST,
+            "/api/v1/sessions",
+            json!({"name":"API","profile_message":"Hi","profile_color":2}),
+        )
+        .await;
+        for body in [
+            json!({"text":"Hi","bitmap":"AA=="}),
+            json!({"text":"Hi","ink":0}),
+            json!({"ink":3,"bitmap":"AA=="}),
+        ] {
+            assert_eq!(
+                send_json(&app, Method::POST, "/api/v1/sessions/1/messages", body)
+                    .await
+                    .status(),
+                StatusCode::UNPROCESSABLE_ENTITY
+            );
+        }
+        assert_eq!(
+            send_json(
+                &app,
+                Method::POST,
+                "/api/v1/sessions/1/messages",
+                json!({"text":"Hello world","ink":5})
+            )
+            .await
+            .status(),
+            StatusCode::ACCEPTED
+        );
+        for _ in 0..20 {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v1/sessions/1/events")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let body = response_json(response).await;
+            if let Some(event) = body["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["type"] == "message")
+            {
+                let bytes = STANDARD
+                    .decode(event["palette_bitmap"].as_str().unwrap())
+                    .unwrap();
+                assert!(bytes.iter().any(|b| *b != 0));
+                assert!(
+                    bytes
+                        .iter()
+                        .all(|b| [0, 5].contains(&(b & 15)) && [0, 5].contains(&(b >> 4)))
+                );
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        panic!("missing rendered text event");
     }
 }

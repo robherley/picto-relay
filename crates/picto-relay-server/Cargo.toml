@@ -7,12 +7,12 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+picto-relay-link = { path = "../picto-relay-link" }
 anyhow.workspace = true
 axum.workspace = true
 base64.workspace = true
 clap.workspace = true
 picto-relay-codec.workspace = true
-picto-relay-join.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

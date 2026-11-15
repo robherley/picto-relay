@@ -5,8 +5,15 @@ use serde::{Deserialize, Serialize};
 /// Current JSON API protocol version.
 pub const PROTOCOL_VERSION: u8 = 1;
 
+// --- Rooms -----------------------------------------------------------------
+
 /// Number of `PictoChat` rooms, A through D.
 pub const ROOM_COUNT: u8 = 4;
+
+/// Display letters of the `PictoChat` rooms, indexed by room number.
+pub const ROOM_NAMES: [&str; ROOM_COUNT as usize] = ["A", "B", "C", "D"];
+
+// --- Drawing surface ---------------------------------------------------------
 
 /// Logical width of a `PictoChat` drawing in pixels.
 pub const CANVAS_WIDTH: usize = 256;
@@ -14,12 +21,99 @@ pub const CANVAS_WIDTH: usize = 256;
 /// Logical height of a `PictoChat` drawing in pixels.
 pub const CANVAS_HEIGHT: usize = 96;
 
+/// Pixels stored in each byte of a packed one-bit drawing.
+pub const MONO_PIXELS_PER_BYTE: usize = u8::BITS as usize;
+
+/// Bits used by each pixel of a packed palette drawing.
+pub const PALETTE_BITS_PER_PIXEL: usize = 4;
+
+/// Pixels stored in each byte of a packed palette drawing.
+pub const PALETTE_PIXELS_PER_BYTE: usize = u8::BITS as usize / PALETTE_BITS_PER_PIXEL;
+
+/// Mask selecting one palette index (one nibble) from a packed palette byte.
+pub const PALETTE_INDEX_MASK: u8 = (1 << PALETTE_BITS_PER_PIXEL) - 1;
+
 /// Bytes in a packed one-bit drawing.
-pub const BITMAP_BYTES: usize = CANVAS_WIDTH * CANVAS_HEIGHT / 8;
+pub const BITMAP_BYTES: usize = CANVAS_WIDTH * CANVAS_HEIGHT / MONO_PIXELS_PER_BYTE;
+/// Packed 4bpp palette bitmap size in bytes (low nibble is the left pixel).
+pub const PALETTE_BITMAP_BYTES: usize = CANVAS_WIDTH * CANVAS_HEIGHT / PALETTE_PIXELS_PER_BYTE;
+
+// --- Drawable area (pixels), measured conservatively from a DS sample --------
+
+/// Height in pixels of the native DS drawing; rows below it are API padding.
+pub const NATIVE_DRAWING_HEIGHT: usize = picto_relay_codec::DRAWING_HEIGHT;
+
+/// Leftmost drawable column below the name tag.
+pub const DRAWABLE_LEFT: usize = 24;
+
+/// First column right of the drawable area (exclusive right edge).
+pub const DRAWABLE_RIGHT: usize = 252;
+
+/// Leftmost drawable column beside the name tag.
+pub const DRAWABLE_NAMETAG_LEFT: usize = 80;
+
+/// Height in pixels of the name-tag notch at the top-left of a drawing.
+pub const DRAWABLE_NAMETAG_HEIGHT: usize = 16;
+
+/// Safe drawing rectangles as `[x, y, width, height]` in pixels: the strip
+/// right of the name tag, then the full-width area below it.
+pub const DRAWABLE_REGIONS: [[usize; 4]; 2] = [
+    [
+        DRAWABLE_NAMETAG_LEFT,
+        0,
+        DRAWABLE_RIGHT - DRAWABLE_NAMETAG_LEFT,
+        DRAWABLE_NAMETAG_HEIGHT,
+    ],
+    [
+        DRAWABLE_LEFT,
+        DRAWABLE_NAMETAG_HEIGHT,
+        DRAWABLE_RIGHT - DRAWABLE_LEFT,
+        NATIVE_DRAWING_HEIGHT - DRAWABLE_NAMETAG_HEIGHT,
+    ],
+];
+
+// --- Drawing ink palette indices ---------------------------------------------
+
+/// Palette index of blank paper.
+pub const PAPER_INK: u8 = 0;
+
+/// Palette index of black ink, the only ink of a one-bit drawing.
+pub const BLACK_INK: u8 = 1;
+
+/// First palette index of the rainbow shades.
+pub const FIRST_RAINBOW_INK: u8 = 3;
+
+/// Number of rainbow shades, palette indices 3 through 15.
+pub const RAINBOW_INK_COUNT: u8 = PALETTE_INDEX_MASK - FIRST_RAINBOW_INK + 1;
+
+/// Fixed pen palette indices accepted for text: black and the rainbow shades.
+/// Index 2 is excluded because its meaning is unknown.
+pub const INK_INDICES: &[u8] = &[1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+
+// --- Request limits ------------------------------------------------------------
+
+/// Maximum display name length in UTF-16 code units.
+pub const NAME_MAX_UNITS: usize = picto_relay_link::NICKNAME_LEN / size_of::<u16>();
+
+/// Maximum text message length in UTF-16 code units.
+pub const TEXT_MAX_UNITS: usize = 220;
+
+/// Maximum personal profile message length in UTF-16 code units.
+pub const PROFILE_MESSAGE_MAX_UNITS: usize =
+    picto_relay_link::PROFILE_MESSAGE_LEN / size_of::<u16>();
+
+/// Inclusive maximum DS profile color index.
+pub const PROFILE_COLOR_MAX: u8 = picto_relay_link::MAX_PROFILE_COLOR;
 
 /// Request body for creating one virtual `PictoChat` session.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub struct CreateSessionRequest {
+    /// DS profile color index (0–15); omitted requests retain the original color.
+    #[serde(default)]
+    pub profile_color: u8,
+    /// Personal message advertised during profile exchange (up to 26 UTF-16 units).
+    #[serde(default)]
+    pub profile_message: String,
     /// Display name assigned to the virtual station.
     pub name: String,
     /// Room number from `0` (A) through `3` (D). Omitted requests use the server default.
@@ -41,6 +135,8 @@ pub struct CreateSessionResponse {
 /// Snapshot of the participants known to the selected backend in one room.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RoomSummary {
+    /// Whether a current roster or recent beacon has been observed.
+    pub observed: bool,
     /// Room number from `0` (A) through `3` (D).
     pub room: u8,
     /// Number of clients advertised by the room, including clients whose profile is not known yet.
@@ -58,11 +154,18 @@ pub struct RoomsResponse {
     pub rooms: Vec<RoomSummary>,
 }
 
-/// Request body for submitting one packed monochrome drawing.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+/// Request body for submitting one packed drawing.
+#[derive(Clone, Debug, Deserialize)]
 pub struct SendMessageRequest {
+    /// Text to render; mutually exclusive with the bitmap fields.
+    pub text: Option<String>,
+    /// Ink for text rendering; defaults to black.
+    pub ink: Option<crate::text::Ink>,
     /// Base64-encoded, row-major, one-bit 256x96 bitmap.
+    #[serde(default)]
     pub bitmap: String,
+    /// Optional base64 row-major 4bpp bitmap; mutually exclusive with bitmap.
+    pub palette_bitmap: Option<String>,
 }
 
 /// Response returned when a drawing has entered the broker queue.
@@ -86,6 +189,18 @@ pub struct EventsResponse {
 /// Description of the active gateway and drawing contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct StatusResponse {
+    /// Accepted fixed pen indices; rainbow is also available for text.
+    pub ink_indices: &'static [u8],
+    /// Whether text accepts rainbow ink.
+    pub rainbow_text: bool,
+    /// Maximum text length in UTF-16 units.
+    pub text_max_units: usize,
+    /// Maximum personal message length in UTF-16 units.
+    pub profile_message_max_units: usize,
+    /// Inclusive maximum profile color index.
+    pub profile_color_max: u8,
+    /// Safe drawing rectangles as [x, y, width, height].
+    pub drawable_regions: [[usize; 4]; 2],
     /// JSON API version.
     pub version: u8,
     /// Radio implementation currently attached to the broker.
@@ -98,6 +213,10 @@ pub struct StatusResponse {
     pub bitmap_bytes: usize,
     /// Encoding expected in JSON request bodies.
     pub bitmap_encoding: &'static str,
+    /// Decoded byte length for indexed color drawings.
+    pub palette_bitmap_bytes: usize,
+    /// Encoding for the optional indexed color field.
+    pub palette_bitmap_encoding: &'static str,
 }
 
 /// Stable JSON error response.
@@ -136,6 +255,17 @@ impl ServerEnvelope {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerWireEvent {
+    /// Personal profile observed in a physical room.
+    Profile {
+        /// MAC-derived participant identifier.
+        station_id: u32,
+        /// Profile nickname.
+        name: String,
+        /// Personal message.
+        profile_message: String,
+        /// Raw DS profile color.
+        profile_color: u16,
+    },
     /// Reports physical radio association and profile progress.
     BackendState {
         /// Stable state name suitable for interactive clients.
@@ -179,6 +309,9 @@ pub enum ServerWireEvent {
         message_id: u32,
         /// Base64-encoded packed monochrome bitmap.
         bitmap: String,
+        /// Optional lossless 4bpp palette bitmap; bitmap remains a monochrome fallback.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        palette_bitmap: Option<String>,
     },
     /// Reports acknowledgement of a submitted message.
     Delivered {

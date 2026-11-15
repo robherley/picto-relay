@@ -18,8 +18,27 @@
           <h1 id="lobby-title">Rooms</h1>
           <label>Name <input id="name" maxlength="10" value="Relay" autocomplete="nickname"></label>
         </div>
+        <label>Profile color <select id="profile-color">
+          <option value="0">Default (gray)</option>
+          <option value="1">Brown</option>
+          <option value="2">Red</option>
+          <option value="3">Pink</option>
+          <option value="4">Orange</option>
+          <option value="5">Yellow</option>
+          <option value="6">Lime</option>
+          <option value="7">Green</option>
+          <option value="8">Dark green</option>
+          <option value="9">Teal</option>
+          <option value="10">Light blue</option>
+          <option value="11">Blue</option>
+          <option value="12">Dark blue</option>
+          <option value="13">Dark purple</option>
+          <option value="14">Purple</option>
+          <option value="15">Magenta</option>
+        </select></label>
+        <label>Profile message <input id="profile-message" maxlength="26" placeholder="Optional personal message" autocomplete="off"></label>
         <div id="rooms" class="rooms" aria-live="polite"></div>
-        <p class="hint">Counts include nearby DS clients. Names appear after the relay joins.</p>
+        <p class="hint" id="room-hint">Counts include nearby DS clients. Names appear after the relay joins.</p>
       </section>
 
       <section id="chat" hidden aria-labelledby="chat-title">
@@ -41,12 +60,31 @@
             <div id="messages" class="messages" aria-live="polite"></div>
 
             <div class="composer">
-              <canvas id="drawing" width="256" height="96" aria-label="Message drawing area"></canvas>
+              <canvas id="drawing" width="256" height="96" aria-label="Message drawing area" aria-describedby="drawing-hint"></canvas>
+              <p class="hint" id="drawing-hint">Draw in the white area. Shaded edges and the name-tag corner are outside the DS drawing area.</p>
               <div class="tools">
-                <button id="pen" class="selected" type="button">Pen</button>
-                <button id="eraser" type="button">Eraser</button>
+                <button id="pen" class="selected" type="button" aria-pressed="true">Pen</button>
+                <button id="eraser" type="button" aria-pressed="false">Eraser</button>
                 <button id="clear" type="button">Clear</button>
                 <button id="send-drawing" type="button">Send drawing</button>
+              </div>
+              <div class="ink-colors" role="group" aria-label="Pen ink color">
+                <span>Ink</span>
+                <button type="button" class="ink-swatch" data-ink="rainbow" aria-label="Rainbow ink" title="Rainbow" aria-pressed="false"></button>
+                <button type="button" class="ink-swatch" data-ink="1" aria-label="Black ink" title="Black" aria-pressed="true"></button>
+                <button type="button" class="ink-swatch" data-ink="3" aria-label="Pink ink" title="Pink" aria-pressed="false"></button>
+                <button type="button" class="ink-swatch" data-ink="4" aria-label="Rose ink" title="Rose" aria-pressed="false"></button>
+                <button type="button" class="ink-swatch" data-ink="5" aria-label="Red ink" title="Red" aria-pressed="false"></button>
+                <button type="button" class="ink-swatch" data-ink="6" aria-label="Red orange ink" title="Red orange" aria-pressed="false"></button>
+                <button type="button" class="ink-swatch" data-ink="7" aria-label="Orange ink" title="Orange" aria-pressed="false"></button>
+                <button type="button" class="ink-swatch" data-ink="8" aria-label="Gold ink" title="Gold" aria-pressed="false"></button>
+                <button type="button" class="ink-swatch" data-ink="9" aria-label="Yellow ink" title="Yellow" aria-pressed="false"></button>
+                <button type="button" class="ink-swatch" data-ink="10" aria-label="Lime ink" title="Lime" aria-pressed="false"></button>
+                <button type="button" class="ink-swatch" data-ink="11" aria-label="Green ink" title="Green" aria-pressed="false"></button>
+                <button type="button" class="ink-swatch" data-ink="12" aria-label="Teal ink" title="Teal" aria-pressed="false"></button>
+                <button type="button" class="ink-swatch" data-ink="13" aria-label="Cyan ink" title="Cyan" aria-pressed="false"></button>
+                <button type="button" class="ink-swatch" data-ink="14" aria-label="Blue ink" title="Blue" aria-pressed="false"></button>
+                <button type="button" class="ink-swatch" data-ink="15" aria-label="Indigo ink" title="Indigo" aria-pressed="false"></button>
               </div>
               <form id="text-form">
                 <input id="text" maxlength="220" placeholder="Type a message" autocomplete="off">

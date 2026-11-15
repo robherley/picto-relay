@@ -17,7 +17,7 @@ body {
   min-height: 100vh;
 }
 
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 
 button {
   border: 2px solid var(--ink);
@@ -182,3 +182,10 @@ aside {
   .section-heading label { justify-content: space-between; }
   #text-form { flex-direction: column; }
 }
+
+.ink-colors { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
+.ink-colors > span { margin-right: 4px; }
+button.ink-swatch { width: 28px; height: 28px; min-width: 28px; padding: 0; border-radius: 50%; background: var(--ink-color); border: 2px solid #fff; box-shadow: 0 0 0 1px #879389; }
+button.ink-swatch:hover { background: var(--ink-color); box-shadow: 0 0 0 2px #526357; }
+button.ink-swatch.selected { background: var(--ink-color); box-shadow: 0 0 0 3px #263d2e; }
+button.ink-swatch:focus-visible { background: var(--ink-color); outline: 2px solid #263d2e; outline-offset: 4px; }

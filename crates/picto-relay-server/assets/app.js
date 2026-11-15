@@ -1,10 +1,37 @@
 "use strict";
 
+// Provisional DSi palette from capture-based reverse engineering:
+// https://github.com/PeterWarrington/pictochat-interceptor/blob/main/pictochat_decode.py
+// Index 2 is preserved on the wire; its display meaning is unknown.
+const INK_PALETTE = [[255,255,255],[0,0,0],[0,0,0],[255,82,164],[255,51,102],
+  [244,42,55],[255,91,40],[255,145,34],[255,195,35],[255,224,45],[174,224,55],
+  [65,183,76],[22,151,166],[62,205,224],[49,139,220],[46,75,190]];
+
 const API = "/api/v1";
 const WIDTH = 256;
 const HEIGHT = 96;
 const ROOM_NAMES = ["A", "B", "C", "D"];
 const NATIVE_DRAWING_HEIGHT = 80;
+// Conservative pixel-aligned bounds from the user's filled DS drawing sample.
+// Keep the 256×96 transport surface; only this inset is drawable on the device.
+const DRAWING_LEFT = 24;
+const DRAWING_RIGHT = 252;
+const DRAWING_TOP_LEFT = 80;
+const DRAWING_NOTCH_HEIGHT = 16;
+
+function isDrawablePixel(x, y) {
+  return y >= 0 && y < NATIVE_DRAWING_HEIGHT
+    && x >= (y < DRAWING_NOTCH_HEIGHT ? DRAWING_TOP_LEFT : DRAWING_LEFT)
+    && x < DRAWING_RIGHT;
+}
+
+function paintDrawingGuide() {
+  drawingContext.fillStyle = "#e4e9e5";
+  drawingContext.fillRect(0, 0, DRAWING_TOP_LEFT, DRAWING_NOTCH_HEIGHT);
+  drawingContext.fillRect(0, DRAWING_NOTCH_HEIGHT, DRAWING_LEFT, NATIVE_DRAWING_HEIGHT - DRAWING_NOTCH_HEIGHT);
+  drawingContext.fillRect(DRAWING_RIGHT, 0, WIDTH - DRAWING_RIGHT, NATIVE_DRAWING_HEIGHT);
+  drawingContext.fillRect(0, NATIVE_DRAWING_HEIGHT, WIDTH, HEIGHT - NATIVE_DRAWING_HEIGHT);
+}
 const NAMETAG_BOTTOM_Y = 16;
 const NAMETAG_SAFE_MIN_X = 88;
 const FULL_SAFE_MIN_X = 28;
@@ -12,60 +39,6 @@ const VISIBLE_TEXT_MAX_X = 244;
 const LARGE_TEXT = Object.freeze({ scale: 2, originY: 1, lineAdvance: 16, maxLines: 5 });
 const COMPACT_TEXT = Object.freeze({ scale: 1, originY: 1, lineAdvance: 8, maxLines: 10 });
 
-const GLYPHS = Object.freeze({
-  A: [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
-  B: [0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110],
-  C: [0b01111, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b01111],
-  D: [0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110],
-  E: [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111],
-  F: [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000],
-  G: [0b01111, 0b10000, 0b10000, 0b10111, 0b10001, 0b10001, 0b01111],
-  H: [0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
-  I: [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111],
-  J: [0b00111, 0b00010, 0b00010, 0b00010, 0b10010, 0b10010, 0b01100],
-  K: [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001],
-  L: [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
-  M: [0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001],
-  N: [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001],
-  O: [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
-  P: [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
-  Q: [0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101],
-  R: [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001],
-  S: [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110],
-  T: [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
-  U: [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
-  V: [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100],
-  W: [0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010],
-  X: [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001],
-  Y: [0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100],
-  Z: [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111],
-  0: [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
-  1: [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
-  2: [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111],
-  3: [0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110],
-  4: [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
-  5: [0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110],
-  6: [0b01110, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
-  7: [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
-  8: [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
-  9: [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110],
-  " ": [0, 0, 0, 0, 0, 0, 0],
-  ".": [0, 0, 0, 0, 0, 0b01100, 0b01100],
-  ",": [0, 0, 0, 0, 0b01100, 0b01100, 0b01000],
-  "!": [0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0, 0b00100],
-  "?": [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0, 0b00100],
-  "-": [0, 0, 0, 0b11111, 0, 0, 0],
-  _: [0, 0, 0, 0, 0, 0, 0b11111],
-  ":": [0, 0b00100, 0b00100, 0, 0b00100, 0b00100, 0],
-  "/": [0b00001, 0b00010, 0b00010, 0b00100, 0b01000, 0b01000, 0b10000],
-  "@": [0b01110, 0b10001, 0b10111, 0b10101, 0b10111, 0b10000, 0b01111],
-  "#": [0b01010, 0b01010, 0b11111, 0b01010, 0b11111, 0b01010, 0b01010],
-  "'": [0b00100, 0b00100, 0b00010, 0, 0, 0, 0],
-  "(": [0b00010, 0b00100, 0b01000, 0b01000, 0b01000, 0b00100, 0b00010],
-  ")": [0b01000, 0b00100, 0b00010, 0b00010, 0b00010, 0b00100, 0b01000],
-  "+": [0, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0],
-  "=": [0, 0, 0b11111, 0, 0b11111, 0, 0],
-});
 const FALLBACK_GLYPH = Object.freeze([
   0b11111, 0b10001, 0b10101, 0b10101, 0b10101, 0b10001, 0b11111,
 ]);
@@ -75,6 +48,8 @@ const elements = {
   lobby: document.querySelector("#lobby"),
   rooms: document.querySelector("#rooms"),
   name: document.querySelector("#name"),
+  profileMessage: document.querySelector("#profile-message"),
+  profileColor: document.querySelector("#profile-color"),
   chat: document.querySelector("#chat"),
   chatTitle: document.querySelector("#chat-title"),
   sessionStatus: document.querySelector("#session-status"),
@@ -83,6 +58,7 @@ const elements = {
   leave: document.querySelector("#leave"),
   drawing: document.querySelector("#drawing"),
   pen: document.querySelector("#pen"),
+  inkSwatches: document.querySelectorAll("[data-ink]"),
   eraser: document.querySelector("#eraser"),
   clear: document.querySelector("#clear"),
   sendDrawing: document.querySelector("#send-drawing"),
@@ -94,6 +70,9 @@ const state = {
   sessionId: null,
   room: null,
   tool: "pen",
+  penInk: 1,
+  inkPixels: new Uint8Array(WIDTH * HEIGHT),
+  rainbowStep: 0,
   drawing: false,
   lastPoint: null,
   rooms: [],
@@ -137,6 +116,7 @@ function renderRooms() {
     const summary = state.rooms.find((candidate) => candidate.room === room);
     const participants = summary?.participants || [];
     const participantCount = summary?.participant_count ?? participants.length;
+    const observed = summary?.observed !== false;
     const card = document.createElement("article");
     card.className = "room";
 
@@ -145,7 +125,7 @@ function renderRooms() {
     title.textContent = `Room ${roomName(room)}`;
     const count = document.createElement("span");
     count.className = "room-count";
-    count.textContent = `${participantCount} ${participantCount === 1 ? "client" : "clients"}`;
+    count.textContent = observed ? `${participantCount} ${participantCount === 1 ? "client" : "clients"}` : "Not observed";
     heading.append(title, count);
     card.append(heading);
 
@@ -153,7 +133,7 @@ function renderRooms() {
     if (participantCount === 0) {
       const empty = document.createElement("li");
       empty.className = "empty";
-      empty.textContent = "No known clients";
+      empty.textContent = observed ? "No known clients" : "No recent room beacon found";
       list.append(empty);
     } else {
       for (const participant of participants) {
@@ -215,6 +195,11 @@ async function refreshStatus() {
   try {
     const status = await api("/status");
     elements.gateway.textContent = `${status.backend} · ${status.bitmap_width}×${status.bitmap_height}`;
+    document.getElementById("room-hint").textContent = status.backend === "esp32"
+      ? "Nearby counts refresh across Wi-Fi channels every few seconds. Join to learn names; discovery pauses during a chat."
+      : status.backend === "memory"
+        ? "Counts show connected web clients."
+        : "Counts include nearby DS clients. Names appear after the relay joins.";
   } catch (error) {
     elements.gateway.textContent = `Offline · ${error.message}`;
   }
@@ -229,7 +214,7 @@ async function joinRoom(room) {
   try {
     const response = await api("/sessions", {
       method: "POST",
-      body: JSON.stringify({ name, room }),
+      body: JSON.stringify({ name, room, profile_message: elements.profileMessage.value, profile_color: Number(elements.profileColor.value) }),
     });
     state.sessionId = response.session_id;
     state.room = response.room;
@@ -297,6 +282,9 @@ function closeEventSocket() {
 
 function handleEvent(event) {
   switch (event.type) {
+    case "profile":
+      // Profile details are available to API consumers; roster events drive this list.
+      break;
     case "backend_state":
       setSessionStatus(`${event.state} · ${event.detail}`);
       break;
@@ -313,12 +301,14 @@ function handleEvent(event) {
       if (event.room === state.room) addPresenceMessage(event.participant, false);
       break;
     case "message":
-      addDrawingMessage(event.name, event.bitmap);
+      addDrawingMessage(event.name, event.palette_bitmap || event.bitmap);
       break;
     case "delivered":
+      setSessionStatus(`Delivered message ${event.message_id}`);
       addSystemMessage(`Delivered message ${event.message_id}`);
       break;
     case "delivery_timed_out":
+      setSessionStatus(`Delivery timed out for message ${event.message_id}`);
       addSystemMessage(`Delivery timed out for message ${event.message_id}`, true);
       break;
     case "error":
@@ -375,33 +365,54 @@ function addDrawingMessage(name, encodedBitmap) {
   elements.messages.scrollTop = elements.messages.scrollHeight;
 }
 
+function unpackBitmap(bytes) {
+  const color = bytes.length === WIDTH * HEIGHT / 2;
+  if (!color && bytes.length !== WIDTH * HEIGHT / 8) throw new Error("Invalid bitmap length");
+  const pixels = new Uint8Array(WIDTH * HEIGHT);
+  for (let i = 0; i < pixels.length; i++) {
+    pixels[i] = color ? (bytes[i >> 1] >> ((i & 1) * 4)) & 15
+      : (bytes[i >> 3] >> (7 - (i & 7))) & 1;
+  }
+  return pixels;
+}
+
 function paintBitmap(canvas, bytes) {
+  const pixels = unpackBitmap(bytes);
+  if (canvas === elements.drawing) state.inkPixels.set(pixels);
   const context = canvas.getContext("2d");
   const image = context.createImageData(WIDTH, HEIGHT);
-  image.data.fill(255);
-  for (let y = 0; y < HEIGHT; y += 1) {
-    for (let x = 0; x < WIDTH; x += 1) {
-      const byte = bytes[y * (WIDTH / 8) + Math.floor(x / 8)] || 0;
-      if ((byte & (1 << (7 - (x % 8)))) !== 0) {
-        const pixel = (y * WIDTH + x) * 4;
-        image.data[pixel] = 0;
-        image.data[pixel + 1] = 0;
-        image.data[pixel + 2] = 0;
-      }
-    }
+  for (let i = 0; i < pixels.length; i++) {
+    image.data.set(INK_PALETTE[pixels[i]], i * 4);
+    image.data[i * 4 + 3] = 255;
   }
   context.putImageData(image, 0, 0);
+  if (canvas === elements.drawing) paintDrawingGuide();
 }
 
 function clearDrawing() {
+  state.inkPixels.fill(0);
+  state.rainbowStep = 0;
   drawingContext.fillStyle = "white";
   drawingContext.fillRect(0, 0, WIDTH, HEIGHT);
+  paintDrawingGuide();
+}
+
+function selectInk(ink) {
+  if (ink !== "rainbow" && (!Number.isInteger(ink) || ink < 1 || ink > 15 || ink === 2)) return;
+  state.penInk = ink;
+  selectTool("pen");
 }
 
 function selectTool(tool) {
   state.tool = tool;
+  for (const swatch of elements.inkSwatches) {
+    const selected = tool === "pen" && swatch.dataset.ink === String(state.penInk);
+    swatch.classList.toggle("selected", selected);
+    swatch.setAttribute("aria-pressed", String(selected));
+  }
   elements.pen.classList.toggle("selected", tool === "pen");
   elements.eraser.classList.toggle("selected", tool === "eraser");
+  for (const name of ["pen", "eraser"]) elements[name].setAttribute("aria-pressed", String(tool === name));
 }
 
 function canvasPoint(event) {
@@ -413,26 +424,30 @@ function canvasPoint(event) {
 }
 
 function drawTo(point) {
-  drawingContext.strokeStyle = state.tool === "pen" ? "black" : "white";
-  drawingContext.lineWidth = state.tool === "pen" ? 2 : 9;
-  drawingContext.lineCap = "round";
-  drawingContext.beginPath();
-  drawingContext.moveTo(state.lastPoint.x, state.lastPoint.y);
-  drawingContext.lineTo(point.x, point.y);
-  drawingContext.stroke();
+  const dx = point.x - state.lastPoint.x, dy = point.y - state.lastPoint.y;
+  const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy)));
+  for (let step = 1; step <= steps; step++) {
+    const x = Math.round(state.lastPoint.x + dx * step / steps);
+    const y = Math.round(state.lastPoint.y + dy * step / steps);
+    const ink = state.tool === "eraser" ? 0 : state.penInk === "rainbow"
+      ? 3 + Math.floor(state.rainbowStep++ / 6) % 13 : state.penInk;
+    const radius = state.tool === "eraser" ? 4 : 1;
+    drawingContext.fillStyle = `rgb(${INK_PALETTE[ink].join(",")})`;
+    for (let oy = -radius; oy <= radius; oy++) {
+      for (let ox = -radius; ox <= radius; ox++) {
+        const px = x + ox, py = y + oy;
+        if (ox * ox + oy * oy > radius * radius || !isDrawablePixel(px, py)) continue;
+        state.inkPixels[py * WIDTH + px] = ink;
+        drawingContext.fillRect(px, py, 1, 1);
+      }
+    }
+  }
   state.lastPoint = point;
 }
 
 function packedDrawing() {
-  const pixels = drawingContext.getImageData(0, 0, WIDTH, HEIGHT).data;
-  const bitmap = new Uint8Array(WIDTH * HEIGHT / 8);
-  for (let y = 0; y < HEIGHT; y += 1) {
-    for (let x = 0; x < WIDTH; x += 1) {
-      const pixel = (y * WIDTH + x) * 4;
-      const darkness = (pixels[pixel] + pixels[pixel + 1] + pixels[pixel + 2]) / 3;
-      if (darkness < 180) bitmap[y * (WIDTH / 8) + Math.floor(x / 8)] |= 1 << (7 - (x % 8));
-    }
-  }
+  const bitmap = new Uint8Array(WIDTH * HEIGHT / 2);
+  for (let i = 0; i < state.inkPixels.length; i++) bitmap[i >> 1] |= state.inkPixels[i] << ((i & 1) * 4);
   return bitmap;
 }
 
@@ -447,8 +462,9 @@ async function sendCurrentDrawing() {
   try {
     await api(`/sessions/${state.sessionId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ bitmap: bitmapBase64(packedDrawing()) }),
+      body: JSON.stringify({ palette_bitmap: bitmapBase64(packedDrawing()) }),
     });
+    clearDrawing();
     setSessionStatus("Message queued");
   } catch (error) {
     addSystemMessage(`Send failed: ${error.message}`, true);
@@ -459,7 +475,13 @@ function renderText(text) {
   const bitmap = renderTextWithLayout(text, LARGE_TEXT)
     || renderTextWithLayout(text, COMPACT_TEXT);
   if (bitmap === null) throw new Error("Text is too long for the PictoChat drawing area");
-  paintBitmap(elements.drawing, bitmap);
+  const pixels = unpackBitmap(bitmap);
+  for (let i = 0; i < pixels.length; i++) {
+    if (pixels[i]) pixels[i] = state.penInk === "rainbow"
+      ? 3 + Math.floor((i % WIDTH) / 6) % 13 : state.penInk;
+  }
+  state.inkPixels.set(pixels);
+  paintBitmap(elements.drawing, packedDrawing());
 }
 
 function renderTextWithLayout(text, layout) {
@@ -474,20 +496,41 @@ function renderTextWithLayout(text, layout) {
   let line = 0;
   let x = textLineOriginX(layout, line);
 
-  for (const character of text) {
-    if (character === "\n" || x + glyphWidth > VISIBLE_TEXT_MAX_X) {
-      line += 1;
-      x = textLineOriginX(layout, line);
-      if (character === "\n") {
-        if (line >= layout.maxLines) return null;
-        continue;
-      }
-    }
-    if (line >= layout.maxLines) return null;
+  let pendingSpaces = 0;
+  const nextLine = () => {
+    line += 1;
+    x = textLineOriginX(layout, line);
+    pendingSpaces = 0;
+    return line < layout.maxLines;
+  };
 
-    const y = layout.originY + line * layout.lineAdvance;
-    drawGlyph(bitmap, x, y, layout.scale, glyph(character));
-    x += glyphAdvance;
+  for (const token of text.replace(/\r\n?/g, "\n").match(/\n|[^\S\n]+|[^\s]+/gu) || []) {
+    if (token === "\n") {
+      if (!nextLine()) return null;
+      continue;
+    }
+    if (/^\s+$/u.test(token)) {
+      pendingSpaces += Array.from(token).length;
+      continue;
+    }
+
+    const characters = Array.from(token);
+    const wordWidth = (characters.length - 1) * glyphAdvance + glyphWidth;
+    const gap = x > textLineOriginX(layout, line) ? pendingSpaces * glyphAdvance : 0;
+    // Move the whole word first. A word wider than an empty line is split below.
+    if (x > textLineOriginX(layout, line) && x + gap + wordWidth > VISIBLE_TEXT_MAX_X) {
+      if (!nextLine()) return null;
+    } else {
+      x += gap;
+    }
+    pendingSpaces = 0;
+
+    for (const character of characters) {
+      if (x + glyphWidth > VISIBLE_TEXT_MAX_X && !nextLine()) return null;
+      const y = layout.originY + line * layout.lineAdvance;
+      drawGlyph(bitmap, x, y, layout.scale, glyph(character));
+      x += glyphAdvance;
+    }
   }
 
   return bitmap;
@@ -527,6 +570,16 @@ function setBitmapPixel(bitmap, x, y) {
   const byte = y * (WIDTH / 8) + Math.floor(x / 8);
   bitmap[byte] |= 1 << (7 - (x % 8));
 }
+
+for (const swatch of elements.inkSwatches) {
+  const ink = swatch.dataset.ink === "rainbow" ? "rainbow" : Number(swatch.dataset.ink);
+  const fill = ink === "rainbow"
+    ? `linear-gradient(135deg, ${INK_PALETTE.slice(3).map(rgb => `rgb(${rgb.join(",")})`).join(",")})`
+    : `rgb(${INK_PALETTE[ink].join(",")})`;
+  swatch.style.setProperty("--ink-color", fill);
+  swatch.addEventListener("click", () => selectInk(ink));
+}
+selectTool("pen");
 
 elements.leave.addEventListener("click", leaveRoom);
 elements.pen.addEventListener("click", () => selectTool("pen"));

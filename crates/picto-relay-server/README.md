@@ -11,11 +11,26 @@ authoritative roster snapshots.
 
 - `memory` is the default and exercises session, roster, message, and delivery event
   shapes without simulating Nintendo packets.
-- `ar9271` starts the physical session worker from `picto-relay-join`. The current
-  firmware represents one virtual station, so only one live API session is supported.
-  Passive beacon observation supplies live A-through-D room counts before the relay
-  joins. Its active room roster contains physical DS nicknames decoded from host
-  profile rebroadcasts.
+- `esp32` uses an ESP-WROOM-32 running the USB bridge firmware. One web
+  session owns the physical station. The ESP32 handles radio timing; this server
+  owns HTTP, WebSockets and drawing encoding/decoding. It joins a DS-hosted room.
+  Room counts are available only after joining.
+
+## Run with the ESP32
+
+Flash [the firmware](../../firmware/esp32/README.md) from the same checkout, then:
+
+```sh
+PICTO_RELAY_BIND=127.0.0.1:3001 cargo run -p picto-relay-server -- \
+  --backend esp32 --serial /dev/cu.usbserial-0001 --channel 1
+```
+
+On Linux use the appropriate port, for example `/dev/ttyUSB0`, with serial-device
+permissions. The host requires `stty`. Open the UI, choose a nickname and join a
+room on the selected radio channel. The serial worker reconnects automatically;
+messages interrupted by a disconnect report a delivery timeout and are not replayed.
+The UI reports upload and radio progress plus queue depth. A full-height drawing
+is 86 radio fragments, so bursts queue behind earlier messages. See [the transport contract](../../docs/esp32-usb.md).
 
 ## Run locally
 
@@ -27,17 +42,6 @@ The default bind address is `0.0.0.0:3001`; override it with `PICTO_RELAY_BIND`.
 Open `http://localhost:3001/` for the browser UI. The API is rooted at
 `http://localhost:3001/api/v1`. WebSocket paths and JSON frame shapes are documented
 in [json-api.md](../../docs/json-api.md).
-
-## Run on the Raspberry Pi
-
-```sh
-sudo cargo run -p picto-relay-server -- \
-  --backend ar9271 \
-  --prepare \
-  --interface wlan1 \
-  --channel 1 \
-  --room A
-```
 
 ## Verify
 

@@ -1,9 +1,7 @@
 [workspace]
 members = [
+    "crates/picto-relay-link",
     "crates/picto-relay-codec",
-    "crates/picto-relay-join",
-    "crates/picto-relay-listener",
-    "crates/picto-relay-radio",
     "crates/picto-relay-server",
 ]
 resolver = "3"
@@ -11,7 +9,7 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 license = "MIT"
-rust-version = "1.85"
+rust-version = "1.88"
 version = "0.1.0"
 
 [workspace.dependencies]
@@ -20,10 +18,7 @@ axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 clap = { version = "4.6.4", features = ["derive"] }
 picto-relay-codec = { path = "crates/picto-relay-codec" }
-picto-relay-join = { path = "crates/picto-relay-join" }
-picto-relay-radio = { path = "crates/picto-relay-radio" }
 picto-relay-server = { path = "crates/picto-relay-server" }
-pnet = "0.35.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"

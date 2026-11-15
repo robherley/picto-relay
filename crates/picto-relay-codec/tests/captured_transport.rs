@@ -1,8 +1,9 @@
 use picto_relay_codec::{
     FcsMode, MacAddress, MacFrame, MessageReassembler, MultiplayerHeader, NintendoFlow,
     PictoChatEnvelope, PictoChatFragment, PictoChatMessage, PictoChatProfile, ReassemblyKey,
-    build_association_request, build_authentication_request, build_client_reply_frame,
-    build_fragment_frame, decode_nintendo_data,
+    build_ack_frame, build_association_request, build_association_response,
+    build_authentication_request, build_authentication_response, build_client_reply_frame,
+    build_fragment_frame, build_host_command_frame, decode_nintendo_data,
 };
 mod support;
 
@@ -47,12 +48,55 @@ fn authentication_request_should_use_open_system_sequence_one() {
 }
 
 #[test]
+fn authentication_response_should_match_captured_host_shape() {
+    let host = MacAddress([0x00, 0x24, 0xf3, 0x67, 0x41, 0x87]);
+    let station = MacAddress([0x00, 0x25, 0xa0, 0xdc, 0x81, 0xdf]);
+
+    assert_eq!(
+        build_authentication_response(host, station, 0x60d),
+        decode_hex("b000a2000025a0dc81df0024f36741870024f3674187d060000002000000")
+    );
+}
+
+#[test]
+fn association_response_should_match_captured_host_shape() {
+    let host = MacAddress([0x00, 0x24, 0xf3, 0x67, 0x41, 0x87]);
+    let station = MacAddress([0x00, 0x25, 0xa0, 0xdc, 0x81, 0xdf]);
+
+    assert_eq!(
+        build_association_response(host, station, 1, 0x60e),
+        decode_hex("1000a2000025a0dc81df0024f36741870024f3674187e0602100000001c001028284")
+    );
+}
+
+#[test]
 fn idle_client_reply_should_match_captured_nintendo_shape() {
     let station = MacAddress([0x00, 0x16, 0x56, 0x4d, 0x27, 0xca]);
     let host = MacAddress([0x00, 0x24, 0xf3, 0x67, 0x41, 0x87]);
     assert_eq!(
         build_client_reply_frame(station, host, 3, &[0, 0x80]),
         decode_hex("1811fe030024f36741870016564d27ca0309bf00001030000080")
+    );
+}
+
+#[test]
+fn idle_host_command_should_match_captured_mac_shape() {
+    let host = MacAddress([0x00, 0x24, 0xf3, 0x67, 0x41, 0x87]);
+    let frame = build_host_command_frame(host, host, 0x10, 998, 2, &[0, 0]);
+
+    assert_eq!(
+        frame,
+        decode_hex("2802e0040309bf0000000024f36741870024f36741870001e60302000000")
+    );
+}
+
+#[test]
+fn host_acknowledgement_should_match_captured_mac_shape() {
+    let host = MacAddress([0x00, 0x24, 0xf3, 0x67, 0x41, 0x87]);
+
+    assert_eq!(
+        build_ack_frame(host, host, 0x611, 0x00a9, 0),
+        decode_hex("180200000309bf0000030024f36741870024f36741871061a9000000")
     );
 }
 

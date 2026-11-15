@@ -1,3 +1,13 @@
 /target/
+
+# Project-local ESP-IDF and toolchain (just espressif)
+/.esp/
 /captures/**/*.pcap
 /captures/**/*.pcapng
+
+__pycache__/
+*.pyc
+
+# Extracted contents of captures/captures.tar.gz
+/captures/pi/
+/captures/esp32/

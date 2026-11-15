@@ -19,8 +19,7 @@ remain opaque so decoded packets can round-trip without losing evidence.
 - Preserve unknown fields and optional frame check sequences losslessly.
 
 This crate does not open wireless interfaces, schedule transmissions, or manage
-participants. Those responsibilities belong to `picto-relay-radio` and the physical
-session worker in `picto-relay-join`.
+participants. Those responsibilities belong to the ESP32 firmware and the server USB worker.
 
 ## Verify
 
