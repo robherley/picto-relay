@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { type Display, type DisplaySettings, GAP_LIMIT, GAP_STEP, SCALES } from "../hooks/display";
+import { type Display, type DisplaySettings, GAP_LIMIT, GAP_STEP } from "../hooks/display";
 import { PixelIcon } from "./PixelIcon";
 
 interface Props {
@@ -47,6 +47,10 @@ const MENU_ICON = [
 export function DisplayControls({ settings, display, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  // The size slider runs from one screen pixel per DS pixel up to the most the
+  // window has room for. Its top position means "fit": the console then keeps
+  // filling the window as the window changes.
+  const largest = Math.max(display.largestScale, 1);
 
   // Clicking anywhere else, or Escape, closes the menu.
   useEffect(() => {
@@ -99,21 +103,19 @@ export function DisplayControls({ settings, display, onChange }: Props) {
 
           <div>
             <label htmlFor="display-scale">Size</label>
-            <select
+            <input
               id="display-scale"
-              value={String(settings.scale)}
-              onChange={(event) =>
-                onChange({ scale: event.target.value === "fit" ? "fit" : Number(event.target.value) })
-              }
-            >
-              <option value="fit">Fit</option>
-              {SCALES.map((scale) => (
-                // The window is the limit: sizes it has no room for cannot be picked.
-                <option key={scale} value={scale} disabled={scale > display.largestScale}>
-                  {scale}x
-                </option>
-              ))}
-            </select>
+              type="range"
+              min={1}
+              max={largest}
+              step={1}
+              value={settings.scale === "fit" ? largest : Math.min(settings.scale, largest)}
+              disabled={largest === 1}
+              onChange={(event) => {
+                const scale = Number(event.target.value);
+                onChange({ scale: scale === largest ? "fit" : scale });
+              }}
+            />
           </div>
 
           <div>

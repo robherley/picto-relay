@@ -67,6 +67,9 @@ body {
 
 /* The menu button keeps out of the way until it is wanted. */
 .display-controls > .choice {
+  width: 28px;
+  min-width: 0;
+  padding: 0;
   background: #0e0e12;
   opacity: 0.55;
 }
@@ -111,14 +114,6 @@ button.choice {
   border-color: #b8b8c4;
   background: #b8b8c4;
   color: #0e0e12;
-}
-
-.display-menu select {
-  height: 28px;
-  border: 2px solid #3c3c48;
-  background: #0e0e12;
-  color: inherit;
-  font: inherit;
 }
 
 .display-menu input[type="range"] {
@@ -338,6 +333,8 @@ button.room {
   position: absolute;
   top: -4px;
   left: -4px;
+  /* Above whatever fills the box, so its bottom edge is never drawn over. */
+  z-index: 1;
   display: block;
   width: 116px;
   min-width: 0;
@@ -661,6 +658,56 @@ button.ink-swatch {
 
 .members li {
   color: color-mix(in oklab, var(--tone), black 35%);
+}
+
+.members button {
+  display: inline;
+}
+
+/* ---- Profile card: someone's personal message, in place of the drawing ---- */
+
+/* A name tag that opens its owner's card. */
+.message > header[role="button"] {
+  cursor: pointer;
+}
+
+.profile-card {
+  position: relative;
+  width: 456px;
+  height: 160px;
+  /* The message starts on the line below the name tag. */
+  padding: 32px 0 0 8px;
+  cursor: default;
+}
+
+.profile-card p {
+  height: 32px;
+  margin: 0;
+  /* Sits the text on the ruled line, like typed text. */
+  padding-top: 6px;
+  line-height: 24px;
+  white-space: pre;
+}
+
+button.profile-close {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  height: 28px;
+  padding: 0 14px;
+  color: #fff;
+  line-height: 28px;
+}
+
+/* The drawing keeps its ink while a card covers it. */
+.ink[hidden] {
+  display: none;
+}
+
+/* While a card is showing, the rest of the screen is out of reach. */
+.showing-card :is(.tool-strip, .keyboard, .actions) {
+  filter: grayscale(1) brightness(0.72);
+  pointer-events: none;
 }
 
 .members li::before {

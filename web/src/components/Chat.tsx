@@ -25,7 +25,9 @@ export function Chat({ session, profile, onLeave }: Props) {
   // A DS announces its color in its profile; our own is known from the start.
   const ownTone = profileTone(profile);
   const toneOf = (stationId: number) =>
-    stationId === view.stationId ? ownTone : profileColor(view.colors.get(stationId)).hex;
+    stationId === view.stationId ? ownTone : profileColor(view.profiles.get(stationId)?.color).hex;
+  // The DS lists everyone but yourself beside the close button.
+  const others = view.members.filter((member) => member.client_id !== view.stationId);
 
   const send = async (pixels: Pixels) => {
     dispatch({ type: "sent", name: profile.name, pixels });
@@ -87,8 +89,10 @@ export function Chat({ session, profile, onLeave }: Props) {
       <Composer
         name={profile.name}
         tone={ownTone}
-        members={view.members}
+        ownMessage={profile.message}
+        members={others}
         toneOf={toneOf}
+        messageOf={(stationId) => view.profiles.get(stationId)?.message ?? ""}
         ready={view.phase === "ready"}
         latest={newest?.kind === "message" ? newest.pixels : undefined}
         onSend={(pixels) => void send(pixels)}

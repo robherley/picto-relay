@@ -59,9 +59,12 @@ After changing an API type in the server, run `just openapi` to rewrite
 - A message you send appears in the log at once, faded until the room confirms
   it, the way a DS shows yours without waiting.
 - Your profile color themes the interface, as the favorite color does on a DS.
+- Pressing your own name tag, or a name in the list beside the close button,
+  shows that person's profile message in place of the drawing, with the rest
+  of the screen grayed out until it is closed.
 - The button in the top-right corner of the page opens the display settings,
   which set how the two screens are shown: one above the
-  other, side by side, or whichever fits; how many screen pixels each DS pixel
-  gets; and the gap between the screens. Left on automatic, it picks the
-  largest size that keeps pixels sharp. The window is always the limit: a size
-  it has no room for cannot be chosen. The choices are remembered.
+  other, side by side, or whichever fits; how large they are; and the gap between
+  them. The size slider stops at what the window has room for, and at its top
+  position the console keeps filling the window as the window changes. The
+  choices are remembered.

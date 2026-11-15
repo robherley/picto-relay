@@ -16,6 +16,15 @@ export type LogEntry =
     }
   | { id: number; kind: "notice"; tone: "enter" | "leave" | "error"; text: string; name?: string };
 
+/** What a station announced about itself. */
+export interface StationProfile {
+  name: string;
+  /** The personal message from its DS settings. */
+  message: string;
+  /** DS profile color index. */
+  color: number;
+}
+
 export interface SessionView {
   /** `joining` until the room accepts us; `lost` once the radio gives up. */
   phase: "joining" | "ready" | "lost";
@@ -24,8 +33,8 @@ export interface SessionView {
   /** Our own identity in rosters and messages, once the room accepts us. */
   stationId?: number;
   members: Participant[];
-  /** Profile color index of each station that has announced one. */
-  colors: ReadonlyMap<number, number>;
+  /** The profile of each station that has announced one. */
+  profiles: ReadonlyMap<number, StationProfile>;
   log: LogEntry[];
 }
 
@@ -33,7 +42,7 @@ export interface SessionView {
 const LOG_LIMIT = 200;
 
 const initial: SessionView = {
-  phase: "joining", detail: "", members: [], colors: new Map(), log: [],
+  phase: "joining", detail: "", members: [], profiles: new Map(), log: [],
 };
 
 type Action =
@@ -102,7 +111,12 @@ function reduce(view: SessionView, action: Action): SessionView {
         kind: "notice", tone: "leave", text: `Now leaving [${letter}]: `, name: event.participant.name,
       });
     case "profile":
-      return { ...view, colors: new Map(view.colors).set(event.station_id, event.profile_color) };
+      return {
+        ...view,
+        profiles: new Map(view.profiles).set(event.station_id, {
+          name: event.name, message: event.profile_message, color: event.profile_color,
+        }),
+      };
     case "message":
       // Our own drawing coming back confirms the copy already in the log.
       if (event.station_id === view.stationId) {

@@ -17,9 +17,14 @@ interface Props {
   name: string;
   /** Our own color, as `#rrggbb`. */
   tone: string;
+  /** Our own profile message. */
+  ownMessage: string;
+  /** Everyone else in the room. */
   members: Participant[];
   /** A member's color, as `#rrggbb`. */
   toneOf: (stationId: number) => string;
+  /** A member's profile message, empty until it is known. */
+  messageOf: (stationId: number) => string;
   /** Whether the room is ready to take a message. */
   ready: boolean;
   /** The newest message in the log, for the copy button. */
@@ -48,6 +53,17 @@ const BACKDROP_BORDER = { borderImageSource: boxBorder("#494949", "#c8c8c8") };
 const ACTION_BORDER = { borderImageSource: boxBorder("#5a5a62", "#f8f8f8") };
 
 const keepFocus = (event: React.MouseEvent) => event.preventDefault();
+
+/** A DS shows a profile message as two lines of thirteen characters. */
+const CARD_LINE_LENGTH = 13;
+function cardLines(message: string): string[] {
+  const characters = Array.from(message);
+  const lines: string[] = [];
+  for (let start = 0; start < characters.length; start += CARD_LINE_LENGTH) {
+    lines.push(characters.slice(start, start + CARD_LINE_LENGTH).join(""));
+  }
+  return lines;
+}
 
 const RAINBOW = "var(--rainbow)";
 const inkStyle = (ink: Ink) =>
@@ -117,7 +133,7 @@ function InkPicker({ ink, onPick }: { ink: Ink; onPick: (ink: Ink) => void }) {
 
 /** The bottom screen: tools, the message being composed, and the keyboard. */
 export function Composer({
-  name, tone, members, toneOf, ready, latest, onSend, onLeave, onScroll,
+  name, tone, ownMessage, members, toneOf, messageOf, ready, latest, onSend, onLeave, onScroll,
 }: Props) {
   // The drawing changes on every pointer move, so it lives outside React
   // state; `repaint` asks for the canvas to be redrawn.
@@ -137,6 +153,10 @@ export function Composer({
   const [keyboard, setKeyboard] = useState<KeyboardState>({
     page: "latin", caps: false, shift: false, katakana: false,
   });
+
+  // Pressing a name shows that person's profile message where the drawing
+  // is, as on a DS; everything else on the screen waits, grayed out.
+  const [card, setCard] = useState<{ name: string; tone: string; message: string } | null>(null);
 
   const penInk: Ink = rainbowPen ? "rainbow" : fixedInk;
 
@@ -245,13 +265,18 @@ export function Composer({
 
   // The physical keyboard types too. Enter starts a new line, as on the DS;
   // Ctrl or Command with Enter sends.
-  const handlers = useRef({ type, erase, newline, send });
-  handlers.current = { type, erase, newline, send };
+  const handlers = useRef({ type, erase, newline, send, card, setCard });
+  handlers.current = { type, erase, newline, send, card, setCard };
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      const { type, erase, newline, send, card, setCard } = handlers.current;
+      if (card) {
+        // A profile is showing: nothing can be typed, and Escape puts it away.
+        if (event.key === "Escape") setCard(null);
+        return;
+      }
       const focused = document.activeElement;
       if (focused instanceof HTMLInputElement || focused instanceof HTMLButtonElement) return;
-      const { type, erase, newline, send } = handlers.current;
       if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) send();
       else if (event.ctrlKey || event.metaKey || event.altKey) return;
       else if (event.key === "Enter") newline();
@@ -283,7 +308,7 @@ export function Composer({
   );
 
   return (
-    <section className="screen composer" aria-label="Write a message">
+    <section className={`screen composer${card ? " showing-card" : ""}`} aria-label="Write a message">
       <div className="tool-strip">
         <button type="button" className="plain tool scroll" aria-label="Scroll up" onMouseDown={keepFocus} onClick={() => onScroll(-1)}>
           <PixelIcon art={ICONS.up} />
@@ -330,7 +355,20 @@ export function Composer({
         <ul className="members" aria-label="In this room">
           {members.map((member) => (
             <li key={member.client_id} style={{ "--tone": toneOf(member.client_id) } as CSSProperties}>
-              {member.name}
+              <button
+                type="button"
+                className="plain"
+                title={`Show ${member.name}'s message`}
+                onClick={() =>
+                  setCard({
+                    name: member.name,
+                    tone: toneOf(member.client_id),
+                    message: messageOf(member.client_id),
+                  })
+                }
+              >
+                {member.name}
+              </button>
             </li>
           ))}
         </ul>
@@ -339,10 +377,32 @@ export function Composer({
         </button>
       </div>
 
-      <MessageBox name={name} tone={tone} className="compose">
+      <MessageBox
+        name={card?.name ?? name}
+        tone={card?.tone ?? tone}
+        className="compose"
+        onNameClick={card ? undefined : () => setCard({ name, tone, message: ownMessage })}
+      >
+        {card && (
+          <div className="profile-card ruled">
+            {cardLines(card.message).map((line, index) => (
+              <p key={index}>{line}</p>
+            ))}
+            <button
+              type="button"
+              className="plain profile-close"
+              style={{ background: tone }}
+              autoFocus
+              onClick={() => setCard(null)}
+            >
+              Ⓐ Close
+            </button>
+          </div>
+        )}
         <canvas
           ref={canvas}
           className="ink ruled"
+          hidden={card !== null}
           width={BOX_WIDTH}
           height={NATIVE_HEIGHT}
           aria-label="Drawing area"

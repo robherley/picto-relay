@@ -22,8 +22,8 @@ export interface Display {
 
 export const DEFAULT_DISPLAY: DisplaySettings = { layout: "auto", scale: "fit", gap: 12 };
 
-/** Whole scales offered, in screen pixels per DS pixel. */
-export const SCALES = [1, 2, 3, 4, 5, 6];
+/** The largest scale offered, in screen pixels per DS pixel. */
+export const LARGEST_SCALE = 6;
 export const GAP_LIMIT = 160;
 export const GAP_STEP = 4;
 
@@ -67,6 +67,6 @@ export function resolveDisplay(
   return {
     layout,
     zoom: zoomFor(layout),
-    largestScale: Math.floor(mostRoom * LAYOUT_SCALE),
+    largestScale: Math.min(Math.floor(mostRoom * LAYOUT_SCALE), LARGEST_SCALE),
   };
 }
