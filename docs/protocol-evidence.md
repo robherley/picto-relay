@@ -169,14 +169,14 @@ Merely reassembling the station's own transmitted fragments is not delivery evid
 
 - [packet-shapes.md](packet-shapes.md) is the byte-level reference for management,
   multiplayer, envelope, packet-family, fragment, and reassembled-message shapes.
-- `captured_transport.rs` decodes exact client, host-rebroadcast, acknowledgement,
-  and final-fragment frames from the two-DS capture.
+- `captured_transport.rs` decodes the application packets in exact client,
+  host-rebroadcast and final-fragment frames from the two-DS capture.
 - `captured-client-transfer.hex` contains the fourteen application fragments and
   verifies complete 2,084-byte reassembly and exact metadata.
 - `host-padded-final-fragment.hex` preserves the canonical outbound host tail and
   verifies the 16-byte logical/172-byte physical exception.
-- `golden.rs` verifies both a historical idle Room A beacon and the new two-user
-  joined beacon.
+- `firmware/esp32/test/test.c` verifies beacon parsing against a captured Room A
+  beacon.
 - Unit tests cover malformed frame boundaries, fragment replacement, and out-of-order
   reassembly using fixed cases that are easy to inspect and reproduce.
 - The codec and physical worker use the capture-backed envelope, 160-byte fragment

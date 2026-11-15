@@ -700,11 +700,11 @@ waits for each echo.
 
 ## Executable implementation references
 
-- `crates/picto-relay-codec/src/beacon.rs` — Nintendo and PictoChat beacon parsing.
-- `crates/picto-relay-codec/src/frame.rs` — management/data frame construction.
-- `crates/picto-relay-codec/src/transport.rs` — multiplayer, envelope, fragment, and
-  reassembly codecs.
-- `firmware/esp32/main/client.c` — ESP32 session state machine.
+- `firmware/esp32/main/client.c` — beacon parsing, management/data frame
+  construction and the session state machine.
+- `crates/picto-relay-codec/src/transport.rs` — envelope, fragment, roster, profile
+  and reassembly codecs.
+- `crates/picto-relay-codec/src/message.rs` — the native drawing format.
 - `crates/picto-relay-server/src/esp32.rs` — USB bridge and drawing transport.
 - `crates/picto-relay-codec/tests/fixtures/host-padded-final-fragment.hex` — exact
   captured host rebroadcast that separates logical final length from physical slot size.
