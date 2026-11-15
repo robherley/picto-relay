@@ -1,8 +1,7 @@
-//! Text layout for REST clients, using the browser's shared bitmap font.
+//! Text layout for REST clients, in a bundled 5x7 bitmap font.
 use crate::protocol::{
-    BLACK_INK, CANVAS_WIDTH, DRAWABLE_NAMETAG_HEIGHT, FIRST_RAINBOW_INK, INK_INDICES,
-    PALETTE_BITMAP_BYTES, PALETTE_BITS_PER_PIXEL, PALETTE_PIXELS_PER_BYTE, RAINBOW_INK_COUNT,
-    TEXT_MAX_UNITS,
+    BLACK_INK, CANVAS_WIDTH, DRAWABLE_NAMETAG_HEIGHT, INK_INDICES, PALETTE_BITMAP_BYTES,
+    PALETTE_BITS_PER_PIXEL, PALETTE_PIXELS_PER_BYTE, RAINBOW_INKS, TEXT_MAX_UNITS,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -30,7 +29,7 @@ const GLYPH_ADVANCE: usize = GLYPH_WIDTH + 1;
 /// One glyph: a bit mask per row, the leftmost pixel in bit `GLYPH_WIDTH - 1`.
 type Glyph = [u8; GLYPH_ROWS];
 
-/// Box drawn for characters missing from the font, matching the browser.
+/// Box drawn for characters missing from the font.
 const FALLBACK_GLYPH: Glyph = [
     0b11111, 0b10001, 0b10101, 0b10101, 0b10101, 0b10001, 0b11111,
 ];
@@ -76,11 +75,16 @@ const COMPACT_TEXT: TextLayout = TextLayout {
     max_lines: 10,
 };
 
-/// Fixed DS drawing ink index or the string `rainbow`.
+/// A fixed pen color, or the string `rainbow`.
+///
+/// Fixed colors are DS palette indices. As a DS shows them: 1 black, 2 gray,
+/// 3 magenta, 4 pink, 5 red, 6 red orange, 7 orange, 8 yellow, 9 lime,
+/// 10 green, 11 teal, 12 cyan, 13 light blue, 14 blue, 15 dark blue. `rainbow`
+/// cycles through 3 to 15 in that order.
 #[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum Ink {
-    /// One of the supported fixed pen colors.
+    /// One of the indices in `ink_indices` from `GET /status`.
     Color(u8),
     /// Only `rainbow` is accepted.
     Mode(String),
@@ -91,21 +95,21 @@ impl Default for Ink {
     }
 }
 
-/// Renders wrapped text in the same native-safe area as the browser.
+/// Renders wrapped text inside the area a DS shows.
 /// # Errors
 /// Rejects invalid ink, empty or oversized text, or text that cannot fit.
 pub fn render(text: &str, ink: &Ink) -> Result<Vec<u8>, &'static str> {
     match ink {
         Ink::Color(index) if INK_INDICES.contains(index) => {}
         Ink::Mode(mode) if mode == RAINBOW_INK_MODE => {}
-        _ => return Err("Ink must be 1, 3–15, or rainbow"),
+        _ => return Err("Ink must be 1–15 or rainbow"),
     }
     let text = text.trim();
     if text.is_empty() || text.encode_utf16().count() > TEXT_MAX_UNITS || text.contains('\0') {
         return Err("Text must contain 1–220 UTF-16 units and no NUL characters");
     }
-    let font: BTreeMap<char, Glyph> = serde_json::from_str(include_str!("../assets/font.json"))
-        .map_err(|_| "Invalid bundled font")?;
+    let font: BTreeMap<char, Glyph> =
+        serde_json::from_str(include_str!("font.json")).map_err(|_| "Invalid bundled font")?;
     layout(text, ink, &font, LARGE_TEXT)
         .or_else(|| layout(text, ink, &font, COMPACT_TEXT))
         .ok_or("Text is too long for the PictoChat drawing area")
@@ -197,9 +201,7 @@ fn layout(
                                 Ink::Color(c) => *c,
                                 Ink::Mode(_) => {
                                     let band = px / RAINBOW_BAND_WIDTH;
-                                    FIRST_RAINBOW_INK
-                                        + u8::try_from(band % usize::from(RAINBOW_INK_COUNT))
-                                            .ok()?
+                                    RAINBOW_INKS[band % RAINBOW_INKS.len()]
                                 }
                             };
                             let index = py * CANVAS_WIDTH + px;
@@ -225,7 +227,7 @@ mod tests {
         hash: u32,
     }
     #[test]
-    fn rest_renderer_matches_browser_golden_samples() {
+    fn renderer_matches_golden_samples() {
         let fixtures: Vec<Fixture> =
             serde_json::from_str(include_str!("../tests/text-fixtures.json")).unwrap();
         for f in fixtures {
@@ -241,12 +243,7 @@ mod tests {
         for text in [String::new(), "a".repeat(221), "a\0b".into()] {
             assert!(render(&text, &Ink::default()).is_err());
         }
-        for ink in [
-            Ink::Color(0),
-            Ink::Color(2),
-            Ink::Color(16),
-            Ink::Mode("red".into()),
-        ] {
+        for ink in [Ink::Color(0), Ink::Color(16), Ink::Mode("red".into())] {
             assert!(render("Hi", &ink).is_err());
         }
     }

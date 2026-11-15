@@ -723,11 +723,12 @@ impl Esp32Broker {
                 if let Some(participant) = joined {
                     self.send_to(ServerWireEvent::ParticipantJoined { room, participant });
                 }
-                let Some((client_id, _)) = &self.client else {
+                if self.client.is_none() {
                     return;
-                };
+                }
+                // The identity the session has in rosters and on its messages.
                 ServerWireEvent::SessionReady {
-                    client_id: client_id.0,
+                    client_id: station_id(self.config.station),
                 }
             }
             LiveEvent::Participants { room, participants } => {

@@ -2,7 +2,7 @@
 
 `picto-relay-server` owns the bounded async room/session broker, connects the API to
 either an in-memory or physical backend, exposes the versioned JSON HTTP API, and
-serves the framework-free browser client embedded in its binary. Room snapshots and
+serves the [web client](../../web/README.md) embedded in its binary. Room snapshots and
 session events are pushed over WebSockets; REST polling remains available for API
 compatibility. Session streams include explicit participant join/leave deltas alongside
 authoritative roster snapshots.
@@ -35,8 +35,13 @@ is 86 radio fragments, so bursts queue behind earlier messages. See [the transpo
 ## Run locally
 
 ```sh
+just web-build
 cargo run -p picto-relay-server
 ```
+
+The web client is built separately into `web/dist` and embedded when the server
+compiles. Without it the server still builds and serves the API, and answers
+`/` with a note saying how to build the client.
 
 The default bind address is `0.0.0.0:3001`; override it with `PICTO_RELAY_BIND`.
 Open `http://localhost:3001/` for the browser UI. The API is rooted at

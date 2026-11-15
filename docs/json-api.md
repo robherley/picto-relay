@@ -72,7 +72,7 @@ by a DS. See [firmware and USB protocol](esp32-usb.md).
 - `bitmap_width: 256`, `bitmap_height: 96`
 - `bitmap_bytes: 3072`, `bitmap_encoding: "base64_row_major_mono_1bpp_msb_first"`
 - `palette_bitmap_bytes: 12288`, `palette_bitmap_encoding: "base64_row_major_indexed_4bpp_low_nibble_first"`
-- `ink_indices: [1,3,4,5,6,7,8,9,10,11,12,13,14,15]`, `rainbow_text: true`
+- `ink_indices: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]`, `rainbow_text: true`
 - `text_max_units: 220`, `profile_message_max_units: 26`, `profile_color_max: 15`
 - `drawable_regions: [[80,0,172,16],[24,16,228,64]]`
 
@@ -147,10 +147,25 @@ curl -i -H 'content-type: application/json' \
 `ink` defaults to black (`1`). Supply a numeric fixed pen index from `/status`, or
 `"rainbow"`. Profile colors and drawing ink are different palettes.
 
-Text is trimmed, word-wrapped around the name-tag area, and rendered with the
-browser's shared bitmap font. Explicit newlines are preserved; oversized words
+| Index | Ink | Index | Ink |
+|---:|---|---:|---|
+| 1 | Black | 9 | Lime |
+| 2 | Gray | 10 | Green |
+| 3 | Magenta | 11 | Teal |
+| 4 | Pink | 12 | Cyan |
+| 5 | Red | 13 | Light blue |
+| 6 | Red orange | 14 | Blue |
+| 7 | Orange | 15 | Dark blue |
+| 8 | Yellow | | |
+
+The names are how each index looks on a real DS, read from a photograph of one
+showing all sixteen indices side by side. `"rainbow"` cycles through 3 to 15 in
+that order.
+
+Text is trimmed, word-wrapped around the name-tag area, and rendered in a
+bundled 5×7 bitmap font. Explicit newlines are preserved; oversized words
 can split. The renderer tries large text, then compact text. Unsupported glyphs
-use the same fallback box as the browser. Text must contain 1–220 UTF-16 units,
+are drawn as a box. Text must contain 1–220 UTF-16 units,
 no NULs, and fit the drawing area. Rainbow text uses horizontal color bands.
 
 ## Send a drawing
@@ -172,8 +187,8 @@ byte. The left pixel occupies the low nibble. Byte `0xf3` means indices 3 then 1
 {"palette_bitmap":"BASE64_INDEXED_BYTES"}
 ```
 
-Indices: 0 paper, 1 black, 3–15 rainbow shades. Index 2 is preserved but its meaning
-is unknown and the browser displays it as black. RGB previews are approximate;
+Indices: 0 paper, and the inks listed under [Send text](#send-text). Every index
+is carried as given. RGB previews are approximate;
 wire indices are lossless. Color uses the same native radio payload size as mono.
 
 Both formats use `POST /sessions/{id}/messages`. HTTP 202 returns
