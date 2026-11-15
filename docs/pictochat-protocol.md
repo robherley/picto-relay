@@ -5,27 +5,21 @@ currently understood. It is intended to be sufficient for implementing a compati
 client while making uncertainty explicit instead of assigning speculative meanings to
 unknown bytes.
 
-Last evidence update: **2026-08-20**.
+Wire-format evidence was originally consolidated on **2026-08-23**; the runtime
+summary below was updated for the ESP32-only cleanup.
 
 ## Current interoperability status
 
-Picto Relay now interoperates with a physical Nintendo DS as a PictoChat Room A
-client through an AR9271 adapter and custom firmware. The following milestones are
-physically verified, not merely reproduced from captures:
+The supported hardware is an ESP-WROOM-32 running the C USB bridge firmware, with the
+web server on the computer. Discovery, authentication, association, profiles,
+continued membership, and outbound drawing delivery have been verified against
+a DS-hosted Room A. See [current tests and timings](esp32-usb.md).
 
-| Capability | Status | Evidence |
-|---|---|---|
-| Discover a DS-hosted room | Verified | Nintendo beacon decoded on channel 1 |
-| Authenticate and associate | Verified | Host assigns AID `0xc001`, participant slot 1 |
-| Remain present in the room | Verified | Firmware answers targeted slot polls; beacon rises from one to two users |
-| Publish nickname/profile | Verified | `PictoRelay` visibly appeared in the real DS participant list |
-| Send a drawing | Verified | A generated 3x3 dot visibly rendered on the DS |
-| Receive the host rebroadcast | Verified | All fourteen fragments reassembled to the original 2,084-byte drawing |
-| Send more than one drawing per process | Implemented | Runtime message templates are one-shot and reloadable; messages queue in Rust |
-| Multiple simultaneous virtual stations | Not implemented | Wire slots support it, current firmware owns one station/slot |
-
-The radio timing portion is adapter-firmware work. Discovery, frame construction,
-state tracking, drawing encoding, reassembly, and the JSON interface are Rust.
+The relay does not host rooms or support multiple simultaneous virtual stations.
+The former AR9271/Pi implementation has been removed. Historical adapter-specific
+observations later in this document remain wire-protocol evidence, not descriptions
+of the current runtime. The codec retains host packet formats for decoding and
+capture regression tests; that does not provide a hosting backend.
 
 ## Confidence labels
 
@@ -46,9 +40,10 @@ Three captures are especially important:
 
 | Capture | Participants | What it proves |
 |---|---|---|
-| `1787193673345-real-ds-clean-join-baseline.pcap` | Real DS host plus real DS client | Clean association, opening session reply, identity/profile exchange, idle membership, and leave |
-| `session-state-fix-2.pcap` | Real DS host plus Picto Relay virtual client | Authentication, association into slot 1, opening session, both profile passes, sustained timed replies, two-user beacon, and clean leave |
-| `1787275056402-virtual-client-outbound-dot-padded-final.pcap` | Real DS host plus Picto Relay virtual client | Complete virtual-client join and profile exchange, sixteen-frame drawing transaction, visible dot delivery, and all fourteen host-rebroadcast drawing fragments |
+| `1787193673345-real-ds-clean-join-baseline.pcap.gz` | Real DS host plus real DS client | Clean association, opening session reply, identity/profile exchange, idle membership, and leave |
+| `session-state-fix-2.pcap.gz` | Real DS host plus Picto Relay virtual client | Authentication, association into slot 1, opening session, both profile passes, sustained timed replies, two-user beacon, and clean leave |
+| `1787275056402-virtual-client-outbound-dot-padded-final.pcap.gz` | Real DS host plus Picto Relay virtual client | Complete virtual-client join and profile exchange, sixteen-frame drawing transaction, visible dot delivery, and all fourteen host-rebroadcast drawing fragments |
+| `20260823-software-host-ap-template.pcap.gz` | Picto Relay host plus real DS client | Hardware-generated custom beacon discovery, eleven successful authentication/association cycles into slot 1, and the four-second no-poll timeout boundary |
 
 The clean real-client baseline used host `00:24:f3:67:41:87` and client
 `00:25:a0:dc:81:df`. The successful virtual-client run used station
@@ -66,7 +61,7 @@ confirmed by direct observation of the physical DS LCD.
 
 The outbound capture used host `00:24:f3:67:41:87`, virtual station
 `00:09:bf:52:00:01`, and slot 1. Its canonical manifest and SHA-256 are in
-[`captures/blueberry`](../captures/blueberry/README.md). It contains 162,390 decoded
+[`captures/pi`](../captures/captures.tar.gz). It contains 162,390 decoded
 Nintendo frames and one complete 2,084-byte drawing rebroadcast.
 
 ## Protocol stack
@@ -207,6 +202,23 @@ The first non-host participant therefore occupies slot 1 and is targeted by mask
 assigned slot is checked; Picto Relay replaces its templates if the host chooses a
 different slot.
 
+### Software-host management plane
+
+The canonical software-host capture proves that a normal ath9k AP interface can own
+the beacon clock without PictoChat-specific firmware. Picto Relay supplies a custom
+nl80211 beacon template containing the management header, fixed beacon fields, 1/2
+Mbps basic rates, channel element, and Nintendo vendor tail. The adapter inserts TSF,
+sequence timing, and TIM/DTIM state and transmits every 100 TU.
+
+Complete monitor-mode beacon injection did not work: the DS ignored those otherwise
+matching bytes. With the AP template, the DS authenticated about 5.66 seconds after
+advertising began and associated 2.6 milliseconds later. It then deauthenticated
+about 4.09 seconds after each association because the milestone deliberately emitted
+no Nintendo host command. Eleven consecutive cycles reproduced that boundary.
+
+This verifies discovery, authentication, and association only. Sustained membership
+requires the host to begin the Nintendo CMD/REPLY poll loop described below.
+
 ## Nintendo multiplayer transport
 
 Three Nintendo multicast addresses distinguish the flows:
@@ -270,7 +282,7 @@ Correct bytes sent through an ordinary Linux packet socket are not sufficient. A
 client replies immediately after its targeted CF-Poll, at the first SIFS opportunity.
 The USB/userspace round trip misses this window.
 
-The working AR9271 path retains reply templates in custom firmware and queues a reply
+The retired AR9271 path retains reply templates in custom firmware and queues a reply
 directly from the firmware RX path. In the successful virtual-client capture:
 
 | Measurement | Result |
@@ -583,7 +595,7 @@ compatible USB adapter is the raw-802.11 bridge.
 
 The Nintendo wire format supports multiple clients through association slots and the
 host command/acknowledgement masks. Nothing in the protocol requires one phone only.
-However, the current custom AR9271 firmware retains templates and a sixteen-buffer
+However, the retired custom AR9271 firmware retains templates and a sixteen-buffer
 message window for one virtual station and one slot at a time. Supporting several
 simultaneous phones requires per-station:
 
@@ -613,12 +625,11 @@ This is an implementation limitation, not a demonstrated PictoChat protocol limi
 - `crates/picto-relay-codec/src/frame.rs` — management/data frame construction.
 - `crates/picto-relay-codec/src/transport.rs` — multiplayer, envelope, fragment, and
   reassembly codecs.
-- `crates/picto-relay-join/src/main.rs` — active join and identity responder.
-- `firmware/patches/0001-picto-relay-slot-reply.patch` — SIFS-timed AR9271 reply
-  state machine.
+- `firmware/esp32/main/client.c` — ESP32 session state machine.
+- `crates/picto-relay-server/src/esp32.rs` — USB bridge and drawing transport.
 - `crates/picto-relay-codec/tests/fixtures/host-padded-final-fragment.hex` — exact
   captured host rebroadcast that separates logical final length from physical slot size.
-- `captures/blueberry/1787275056402-virtual-client-outbound-dot-padded-final.json` —
+- `captures/pi/1787275056402-virtual-client-outbound-dot-padded-final.json` —
   canonical outbound capture manifest and hash.
 - [packet-shapes.md](packet-shapes.md) — exact byte layouts and capture fixtures.
 

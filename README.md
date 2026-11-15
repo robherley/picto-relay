@@ -1,62 +1,88 @@
 # Picto Relay
 
-Picto Relay is a Rust service exposing PictoChat send/receive operations through a
-small browser interface and versioned JSON API. A deliberately protocol-free in-memory
-backend supports local development; only the AR9271 backend claims Nintendo DS
-interoperability.
-Physical AR9271 testing has verified discovery, authentication, association, SIFS-timed
-membership, both profile passes, and a visibly rendered `PictoRelay` nickname against
-a real DS host. It has also verified outbound drawing delivery: a generated dot rendered
-on the DS and the host's complete fourteen-fragment rebroadcast was decoded through the
-same JSON backend. The server exposes this transport through the same JSON API.
+Picto Relay connects a Nintendo DS running PictoChat to a browser and versioned
+JSON API. An ESP-WROOM-32 runs the radio protocol in C; the computer runs the
+Rust web server, bitmap codec, and USB serial worker.
 
-See [docs/plan.md](docs/plan.md) for architecture, assumptions, and phases.
-See [docs/pictochat-protocol.md](docs/pictochat-protocol.md) for the consolidated
-protocol and compatibility specification, and
-[docs/protocol-evidence.md](docs/protocol-evidence.md) for capture provenance and
-remaining unknowns. See [docs/packet-shapes.md](docs/packet-shapes.md) for the
-byte-level reference covering every currently observed packet family. See
-[docs/listener.md](docs/listener.md) for tagged live capture on the Raspberry Pi and
-[docs/active-join.md](docs/active-join.md) for the first physical association probe.
-See [docs/json-api.md](docs/json-api.md) for the room and send/receive interface.
-See [docs/progress-notes.md](docs/progress-notes.md) for the chronological engineering
-log, retained evidence, current runtime state, and next work.
+The ESP32 joins a DS-hosted room and exchanges profiles and drawings. Hosting a
+room on the relay is not supported. The former patched AR9271 radio, Linux monitor
+backend, and Pi software-host implementation have been retired.
 
-Each workspace crate also documents its own boundary and usage:
+## Run
 
-- [`picto-relay-codec`](crates/picto-relay-codec/README.md)
-- [`picto-relay-radio`](crates/picto-relay-radio/README.md)
-- [`picto-relay-join`](crates/picto-relay-join/README.md)
-- [`picto-relay-listener`](crates/picto-relay-listener/README.md)
-- [`picto-relay-server`](crates/picto-relay-server/README.md)
-
-## Run locally
-
-Start the Rust service:
+Install Rust and `just` (`brew install just` on macOS). Building firmware also
+needs ESP-IDF v5.5.2, which `just espressif` downloads into the project; see
+the [firmware instructions](firmware/esp32/README.md).
 
 ```sh
-cargo run -p picto-relay-server
+just                    # List commands
+just server             # Run with the connected ESP32
+just server-memory      # Run without hardware
 ```
 
-On the Raspberry Pi, use the physical backend with the matching custom firmware:
+Stop the server before uploading firmware so the serial port is free:
 
 ```sh
-sudo /home/rob/.local/bin/picto-relay-server \
-  --backend ar9271 \
-  --prepare \
-  --interface wlan1 \
-  --channel 1 \
-  --room A
+just espressif          # Once: download ESP-IDF into .esp/
+just firmware-build     # Build only
+just firmware-upload    # Build, then flash the ESP32
 ```
 
-Open `http://localhost:3001/`, or `http://blueberry.lab.reb.gg:3001/` when the server
-runs on the Pi. The page lists relay clients in rooms A–D, joins a selected room, and
-sends or receives typed and hand-drawn messages. The JSON API remains available under
-`/api/v1`.
+Recipes default to `/dev/cu.usbserial-0001` and `127.0.0.1:3001`. Override them
+through environment variables:
+
+```sh
+PICTO_SERIAL_PORT=/dev/ttyUSB0 just firmware-upload
+PICTO_SERIAL_PORT=/dev/ttyUSB0 PICTO_RELAY_BIND=127.0.0.1:3002 just server
+```
+
+`PICTO_CHANNEL` selects the Wi-Fi channel searched first (default `1`) and
+`PICTO_FLASH_BAUD` the flashing speed (default `460800`). The runtime link has no
+settings: firmware and server share one fixed [USB protocol](docs/esp32-usb.md),
+so flash the firmware from the same checkout as the server you run.
+
+Open http://localhost:3001/, enter a nickname, and join the room open on the DS.
+Only one API session can own the ESP32. For hardware-free UI/API development,
+`just server-memory` uses the in-memory backend.
+
+## Components
+
+- [Server](crates/picto-relay-server/README.md): browser UI, JSON API, sessions, and USB worker.
+- [Codec](crates/picto-relay-codec/README.md): captured Nintendo packet and drawing formats.
+- [USB link](crates/picto-relay-link/README.md): host side of the USB framing and body packing.
+- [Firmware](firmware/esp32/README.md): C protocol state machine and ESP-IDF radio hooks.
+
+See the [JSON API](docs/json-api.md), [protocol reference](docs/pictochat-protocol.md),
+[packet shapes](docs/packet-shapes.md), and [capture evidence](docs/protocol-evidence.md).
+Captures and hardware evidence are bundled in one [archive](captures/README.md).
+Earlier investigations are retained under [docs/history](docs/history/README.md);
+their commands and runtime descriptions are historical, not supported workflows.
 
 ## Verify
 
 ```sh
-cargo test --workspace --locked
+just test               # Rust, browser-tool and firmware protocol tests
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 ```
+
+None of these need hardware or ESP-IDF; the firmware protocol code is compiled
+and tested on the host. Only `just firmware-build` needs ESP-IDF.
+
+## Hardware drawing benchmark
+
+Stop the server and leave a DS in the selected room, then run:
+
+```sh
+just benchmark
+PICTO_BENCH_ROOM=2 PICTO_BENCH_TRIALS=5 PICTO_BENCH_PATTERN=dense just benchmark
+```
+
+This ignored Rust integration test owns the ESP32 session and sends visible
+full-height drawings. Rooms are 0–3 (A–D); defaults are Room A, three trials, and
+`cross` (border with diagonals). `dense` sends a checkerboard. The serial port
+setting is the same as `just server`.
+
+Each trial reports submission-to-DS-delivery time; upload timing is logged with
+`RUST_LOG=picto_relay_server=debug`. The test fails on
+reconnection, delivery failure, or timeout and releases its session afterward.
+Normal `cargo test` runs skip this hardware test.

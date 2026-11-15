@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: dtolnay/rust-toolchain@1.88.0
         with:
           components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
@@ -22,3 +22,17 @@ jobs:
         run: cargo test --workspace --all-features --locked
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test browser drawing tools
+        run: node --test crates/picto-relay-server/tests/drawing.test.cjs
+
+      - name: Test firmware protocol (host C build)
+        working-directory: firmware/esp32
+        run: |
+          mkdir -p build-host
+          cc -std=gnu17 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+            main/link.c main/client.c main/bridge.c test/test.c -o build-host/test
+          ./build-host/test

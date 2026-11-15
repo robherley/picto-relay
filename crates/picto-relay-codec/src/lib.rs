@@ -11,23 +11,25 @@ mod transport;
 
 pub use beacon::{
     AssociationRequest, AssociationResponse, Authentication, Beacon, InformationElement,
-    ManagementBody, NintendoBeacon, PictoChatBeacon, parse_management,
+    ManagementBody, NintendoBeacon, PictoChatBeacon, PictoChatBeaconConfig,
+    PictoChatBeaconTemplate, build_pictochat_beacon, build_pictochat_beacon_template,
+    parse_management,
 };
 pub use frame::{
     BROADCAST, CLIENT_ACK, CLIENT_REPLY, FcsMode, FrameControl, FrameType, HOST_TO_CLIENT,
-    MacAddress, MacFrame, MacHeader, SequenceControl, build_association_request,
-    build_authentication_request, build_client_reply_frame, build_data_frame,
-    build_management_frame,
+    MAC_ADDRESS_LEN, MacAddress, MacFrame, MacHeader, SequenceControl, build_association_request,
+    build_association_response, build_authentication_request, build_authentication_response,
+    build_client_reply_frame, build_data_frame, build_management_frame,
 };
 pub use message::{
-    DRAWING_BAND_BYTES, DRAWING_HEIGHT, DRAWING_METADATA_BYTES, DRAWING_WIDTH, PictoChatMessage,
-    PixelBounds, encode_message,
+    DRAWING_BAND_BYTES, DRAWING_BAND_HEIGHT, DRAWING_HEIGHT, DRAWING_METADATA_BYTES, DRAWING_WIDTH,
+    PictoChatMessage, PixelBounds, encode_message,
 };
 pub use transport::{
     MESSAGE_FRAGMENT_PAYLOAD_BYTES, MessageReassembler, MultiplayerHeader, NintendoData,
     NintendoFlow, PictoChatEnvelope, PictoChatFragment, PictoChatProfile, PictoChatRoster,
-    ReassemblyKey, build_ack_frame, build_fragment_frame, decode_nintendo_data,
-    encode_fragment_envelope, fragment_payload, fragment_payload_starting_at,
+    ReassemblyKey, build_ack_frame, build_fragment_frame, build_host_command_frame,
+    decode_nintendo_data, encode_fragment_envelope, fragment_payload, fragment_payload_starting_at,
 };
 
 use thiserror::Error;
@@ -106,15 +108,23 @@ pub(crate) fn too_short(context: &'static str, minimum: usize, actual: usize) ->
     }
 }
 
+// Shared wire-format widths.
+
+/// Bytes in one little-endian 16-bit wire word (a Nintendo "halfword").
+pub(crate) const U16_BYTES: usize = size_of::<u16>();
+/// Bytes in one little-endian 32-bit wire word.
+pub(crate) const U32_BYTES: usize = size_of::<u32>();
+
 pub(crate) fn read_u16(
     data: &[u8],
     offset: usize,
     context: &'static str,
 ) -> Result<u16, DecodeError> {
-    let bytes = data
-        .get(offset..offset + 2)
-        .ok_or_else(|| too_short(context, offset + 2, data.len()))?;
-    Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
+    let end = offset + U16_BYTES;
+    data.get(offset..end)
+        .and_then(|bytes| <[u8; U16_BYTES]>::try_from(bytes).ok())
+        .map(u16::from_le_bytes)
+        .ok_or_else(|| too_short(context, end, data.len()))
 }
 
 pub(crate) fn read_u32(
@@ -122,8 +132,32 @@ pub(crate) fn read_u32(
     offset: usize,
     context: &'static str,
 ) -> Result<u32, DecodeError> {
-    let bytes = data
-        .get(offset..offset + 4)
-        .ok_or_else(|| too_short(context, offset + 4, data.len()))?;
-    Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    let end = offset + U32_BYTES;
+    data.get(offset..end)
+        .and_then(|bytes| <[u8; U32_BYTES]>::try_from(bytes).ok())
+        .map(u32::from_le_bytes)
+        .ok_or_else(|| too_short(context, end, data.len()))
+}
+
+/// Reads a MAC address stored as three little-endian 16-bit words, the encoding Nintendo
+/// uses inside `PictoChat` records: each adjacent pair of octets is swapped on the wire.
+///
+/// # Panics
+///
+/// Panics when `data` holds fewer than [`MAC_ADDRESS_LEN`] bytes after `offset`.
+pub(crate) const fn read_word_swapped_mac(data: &[u8], offset: usize) -> MacAddress {
+    let mut octets = [0; MAC_ADDRESS_LEN];
+    let mut index = 0;
+    while index < MAC_ADDRESS_LEN {
+        // Flipping the lowest index bit selects the other octet of the same 16-bit word.
+        octets[index] = data[offset + (index ^ 1)];
+        index += 1;
+    }
+    MacAddress(octets)
+}
+
+/// Encodes a MAC address as three little-endian 16-bit words. Swapping adjacent octets
+/// is its own inverse, so this reuses [`read_word_swapped_mac`].
+pub(crate) const fn word_swapped_mac(address: MacAddress) -> [u8; MAC_ADDRESS_LEN] {
+    read_word_swapped_mac(&address.0, 0).0
 }

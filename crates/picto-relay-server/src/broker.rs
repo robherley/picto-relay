@@ -2,20 +2,57 @@
 
 use std::{collections::BTreeMap, sync::mpsc as std_mpsc, thread, time::Duration};
 
+use crate::worker::{Esp32Config, LiveCommand, LiveEvent};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use picto_relay_join::{
-    LiveCommand, LiveConfig, LiveEvent, run_live_backend, run_live_room_observer,
-};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, warn};
 
 use crate::protocol::{
-    BITMAP_BYTES, Participant, ROOM_COUNT, RoomSummary, ServerEnvelope, ServerWireEvent,
+    BITMAP_BYTES, PALETTE_BITMAP_BYTES, Participant, ROOM_COUNT, RoomSummary, ServerEnvelope,
+    ServerWireEvent,
 };
 
+pub use crate::worker::{DEFAULT_SERIAL_PORT, DEFAULT_WIFI_CHANNEL};
+
+// --- Queue depths --------------------------------------------------------------
+
+/// Commands the broker actor queues from HTTP tasks before reporting busy.
 const COMMAND_CAPACITY: usize = 64;
+
+/// Events queued per API session before a slow session is dropped.
 const CLIENT_EVENT_CAPACITY: usize = 32;
+
+/// Commands queued for the physical radio worker thread before reporting busy.
+const HARDWARE_COMMAND_CAPACITY: usize = 8;
+
+// --- Identifiers ---------------------------------------------------------------
+
+/// First session identifier handed out by a broker; zero is never assigned.
+const FIRST_CLIENT_ID: u32 = 1;
+
+/// First message identifier assigned within a session.
+const FIRST_MESSAGE_ID: u32 = 0;
+
+// --- Rooms and passive discovery -----------------------------------------------
+
+/// Number of `PictoChat` rooms, as an array length.
+const ROOM_SLOTS: usize = ROOM_COUNT as usize;
+
+/// ASCII letter of room 0; later rooms follow alphabetically.
+const FIRST_ROOM_LETTER: u8 = b'A';
+
+/// Member count reported by the radio for a room whose beacon was not heard.
+const ROOM_UNOBSERVED: u8 = picto_relay_link::NO_BEACON;
+
+/// Discovery result when no room has been observed.
+const NO_ROOMS_OBSERVED: [u8; ROOM_SLOTS] = [ROOM_UNOBSERVED; ROOM_SLOTS];
+
+/// Interval between passive room scans while no session owns the radio.
+const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Name of the thread that drives the ESP32 serial link.
+const HARDWARE_THREAD_NAME: &str = "picto-relay-esp32";
 
 /// Stable identity assigned to one API session.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -47,7 +84,9 @@ pub enum BrokerError {
     #[error("broker command queue is full")]
     Busy,
     /// A bitmap does not have the required packed size.
-    #[error("bitmap must contain exactly {BITMAP_BYTES} bytes, received {0}")]
+    #[error(
+        "bitmap must contain {BITMAP_BYTES} monochrome or {PALETTE_BITMAP_BYTES} palette bytes, received {0}"
+    )]
     InvalidBitmapSize(usize),
     /// A room outside A through D was requested.
     #[error("room must be between 0 (A) and 3 (D), received {0}")]
@@ -67,12 +106,21 @@ impl BrokerHandle {
         Self { commands, rooms }
     }
 
-    /// Starts a single-station broker backed by a physical AR9271 radio worker.
+    /// Starts a single-station ESP32 USB backend.
     #[must_use]
-    pub fn spawn_live(config: LiveConfig) -> Self {
+    pub fn spawn_esp32(port: String, channel: u8) -> Self {
         let (commands, receiver) = mpsc::channel(COMMAND_CAPACITY);
         let (room_updates, rooms) = watch::channel(empty_room_summaries());
-        tokio::spawn(LiveBroker::new(config, receiver, room_updates).run());
+        let broker = Esp32Broker::new(
+            Esp32Config {
+                port,
+                channel,
+                ..Esp32Config::default()
+            },
+            receiver,
+            room_updates,
+        );
+        tokio::spawn(broker.run());
         Self { commands, rooms }
     }
 
@@ -82,12 +130,32 @@ impl BrokerHandle {
     ///
     /// Returns [`BrokerError`] if the actor is busy or unavailable.
     pub async fn register(&self, name: String, room: u8) -> Result<RelaySession, BrokerError> {
+        self.register_with_profile(name, room, String::new(), 0)
+            .await
+    }
+
+    /// Registers a station with a personal profile message.
+    /// # Errors
+    /// Returns an error when the broker is busy or unavailable.
+    pub async fn register_with_profile(
+        &self,
+        name: String,
+        room: u8,
+        profile_message: String,
+        profile_color: u8,
+    ) -> Result<RelaySession, BrokerError> {
         if room >= ROOM_COUNT {
             return Err(BrokerError::InvalidRoom(room));
         }
         let (reply, response) = oneshot::channel();
         self.commands
-            .try_send(BrokerCommand::Register { name, room, reply })
+            .try_send(BrokerCommand::Register {
+                name,
+                room,
+                profile_message,
+                profile_color,
+                reply,
+            })
             .map_err(|error| map_send_error(&error))?;
         response.await.map_err(|_| BrokerError::Unavailable)?
     }
@@ -117,7 +185,7 @@ impl BrokerHandle {
     ///
     /// Returns [`BrokerError`] for an invalid bitmap or unavailable actor.
     pub fn send_message(&self, client_id: ClientId, bitmap: Vec<u8>) -> Result<(), BrokerError> {
-        if bitmap.len() != BITMAP_BYTES {
+        if bitmap.len() != BITMAP_BYTES && bitmap.len() != PALETTE_BITMAP_BYTES {
             return Err(BrokerError::InvalidBitmapSize(bitmap.len()));
         }
         self.commands
@@ -147,6 +215,8 @@ fn map_send_error<T>(error: &mpsc::error::TrySendError<T>) -> BrokerError {
 enum BrokerCommand {
     Register {
         name: String,
+        profile_message: String,
+        profile_color: u8,
         room: u8,
         reply: oneshot::Sender<Result<RelaySession, BrokerError>>,
     },
@@ -186,7 +256,7 @@ impl Broker {
             commands,
             room_updates,
             clients: BTreeMap::new(),
-            next_client_id: 1,
+            next_client_id: FIRST_CLIENT_ID,
         }
     }
 
@@ -198,12 +268,18 @@ impl Broker {
 
     fn handle(&mut self, command: BrokerCommand) {
         match command {
-            BrokerCommand::Register { name, room, reply } => self.register(name, room, reply),
+            BrokerCommand::Register {
+                name,
+                room,
+                profile_message: _,
+                profile_color: _,
+                reply,
+            } => self.register(name, room, reply),
             BrokerCommand::Rooms { reply } => {
                 let _ = reply.send(room_summaries(self.clients.iter()));
             }
             BrokerCommand::SendMessage { client_id, bitmap } => {
-                self.send_message(client_id, bitmap);
+                self.send_message(client_id, &bitmap);
             }
             BrokerCommand::Unregister { client_id } => self.unregister(client_id),
         }
@@ -216,7 +292,7 @@ impl Broker {
         reply: oneshot::Sender<Result<RelaySession, BrokerError>>,
     ) {
         let client_id = ClientId(self.next_client_id);
-        self.next_client_id = self.next_client_id.wrapping_add(1).max(1);
+        self.next_client_id = self.next_client_id.wrapping_add(1).max(FIRST_CLIENT_ID);
         let (events, receiver) = mpsc::channel(CLIENT_EVENT_CAPACITY);
         let joined = Participant {
             client_id: client_id.0,
@@ -228,7 +304,7 @@ impl Broker {
                 name,
                 room,
                 events: events.clone(),
-                next_message_id: 0,
+                next_message_id: FIRST_MESSAGE_ID,
             },
         );
         self.send_to(
@@ -257,7 +333,7 @@ impl Broker {
         }
     }
 
-    fn send_message(&mut self, client_id: ClientId, bitmap: Vec<u8>) {
+    fn send_message(&mut self, client_id: ClientId, bitmap: &[u8]) {
         let Some(sender) = self.clients.get_mut(&client_id) else {
             return;
         };
@@ -269,7 +345,8 @@ impl Broker {
             station_id: client_id.0,
             name: sender_name,
             message_id,
-            bitmap: STANDARD.encode(bitmap),
+            palette_bitmap: (bitmap.len() == PALETTE_BITMAP_BYTES).then(|| STANDARD.encode(bitmap)),
+            bitmap: STANDARD.encode(crate::bitmap::monochrome_bitmap(bitmap)),
         });
         let previous_clients = self.clients.len();
         self.clients.retain(|_, client| {
@@ -357,6 +434,7 @@ fn room_summaries<'a>(
 fn empty_room_summaries() -> Vec<RoomSummary> {
     (0..ROOM_COUNT)
         .map(|room| RoomSummary {
+            observed: true,
             room,
             participant_count: 0,
             participants: Vec::new(),
@@ -371,25 +449,25 @@ fn publish_rooms_if_changed(updates: &watch::Sender<Vec<RoomSummary>>, rooms: Ve
     }
 }
 
-struct LiveBroker {
-    config: LiveConfig,
+struct Esp32Broker {
+    config: Esp32Config,
     commands: mpsc::Receiver<BrokerCommand>,
     room_updates: watch::Sender<Vec<RoomSummary>>,
     hardware_events: mpsc::UnboundedReceiver<LiveEvent>,
     hardware_event_sender: mpsc::UnboundedSender<LiveEvent>,
-    hardware_commands: Option<std_mpsc::Sender<LiveCommand>>,
-    observer_shutdown: Option<std_mpsc::Sender<()>>,
+    hardware_commands: Option<std_mpsc::SyncSender<LiveCommand>>,
     hardware_running: bool,
-    passive_counts: [usize; ROOM_COUNT as usize],
     client: Option<(ClientId, ConnectedClient)>,
     participants: Vec<Participant>,
     roster_initialized: bool,
+    discovered: [u8; ROOM_SLOTS],
     next_message_id: u32,
+    next_client_id: Option<u32>,
 }
 
-impl LiveBroker {
+impl Esp32Broker {
     fn new(
-        config: LiveConfig,
+        config: Esp32Config,
         commands: mpsc::Receiver<BrokerCommand>,
         room_updates: watch::Sender<Vec<RoomSummary>>,
     ) -> Self {
@@ -401,24 +479,35 @@ impl LiveBroker {
             hardware_events,
             hardware_event_sender,
             hardware_commands: None,
-            observer_shutdown: None,
             hardware_running: false,
-            passive_counts: [0; ROOM_COUNT as usize],
             client: None,
             participants: Vec::new(),
             roster_initialized: false,
-            next_message_id: 0,
+            discovered: NO_ROOMS_OBSERVED,
+            next_message_id: FIRST_MESSAGE_ID,
+            next_client_id: Some(FIRST_CLIENT_ID),
         }
     }
 
     async fn run(mut self) {
-        self.start_room_observer();
+        let mut discovery_tick = tokio::time::interval(DISCOVERY_INTERVAL);
+        discovery_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
+                _ = discovery_tick.tick(), if !self.hardware_running && self.client.is_none() => {
+                    let config = self.config.clone();
+                    // Await completion before accepting a join: serial ownership never overlaps.
+                    let result = tokio::task::spawn_blocking(move || crate::esp32::discover(&config.port, config.channel)).await;
+                    self.discovered = match result {
+                        Ok(Ok(counts)) => counts,
+                        error => { debug!(?error, "passive discovery unavailable"); NO_ROOMS_OBSERVED }
+                    };
+                    self.publish_rooms();
+                }
+
                 command = self.commands.recv() => {
                     let Some(command) = command else {
                         self.shutdown_hardware();
-                        self.shutdown_room_observer();
                         break;
                     };
                     self.handle_command(command);
@@ -433,45 +522,15 @@ impl LiveBroker {
         }
     }
 
-    fn start_room_observer(&mut self) {
-        let (shutdown, shutdown_receiver) = std_mpsc::channel();
-        self.observer_shutdown = Some(shutdown);
-        let config = self.config.clone();
-        let events = self.hardware_event_sender.clone();
-        let spawn_result = thread::Builder::new()
-            .name("picto-relay-room-observer".into())
-            .spawn(move || {
-                loop {
-                    let emit = |event| {
-                        let _ = events.send(event);
-                    };
-                    match run_live_room_observer(&config, &shutdown_receiver, &emit) {
-                        Ok(()) => break,
-                        Err(error) => emit(LiveEvent::RoomObserverError {
-                            message: error.to_string(),
-                        }),
-                    }
-                    match shutdown_receiver.recv_timeout(Duration::from_secs(1)) {
-                        Ok(()) | Err(std_mpsc::RecvTimeoutError::Disconnected) => break,
-                        Err(std_mpsc::RecvTimeoutError::Timeout) => {}
-                    }
-                }
-            });
-        if let Err(error) = spawn_result {
-            self.observer_shutdown = None;
-            warn!(%error, "failed to start passive room observer thread");
-        }
-    }
-
-    fn shutdown_room_observer(&mut self) {
-        if let Some(sender) = self.observer_shutdown.take() {
-            let _ = sender.send(());
-        }
-    }
-
     fn handle_command(&mut self, command: BrokerCommand) {
         match command {
-            BrokerCommand::Register { name, room, reply } => self.register(&name, room, reply),
+            BrokerCommand::Register {
+                name,
+                room,
+                profile_message,
+                profile_color,
+                reply,
+            } => self.register(&name, room, profile_message, profile_color, reply),
             BrokerCommand::Rooms { reply } => {
                 let _ = reply.send(self.room_summaries());
             }
@@ -482,17 +541,29 @@ impl LiveBroker {
         }
     }
 
+    fn allocate_client_id(&mut self) -> Option<ClientId> {
+        let id = self.next_client_id?;
+        // Never reuse an ID while an HTTP request or WebSocket can still refer to it.
+        self.next_client_id = id.checked_add(1);
+        Some(ClientId(id))
+    }
+
     fn register(
         &mut self,
         name: &str,
         room: u8,
+        profile_message: String,
+        profile_color: u8,
         reply: oneshot::Sender<Result<RelaySession, BrokerError>>,
     ) {
         if self.client.is_some() || self.hardware_running {
             let _ = reply.send(Err(BrokerError::Busy));
             return;
         }
-        let client_id = ClientId(1);
+        let Some(client_id) = self.allocate_client_id() else {
+            let _ = reply.send(Err(BrokerError::Unavailable));
+            return;
+        };
         let (events, receiver) = mpsc::channel(CLIENT_EVENT_CAPACITY);
         self.client = Some((
             client_id,
@@ -500,32 +571,42 @@ impl LiveBroker {
                 name: name.to_owned(),
                 room,
                 events,
-                next_message_id: 0,
+                next_message_id: FIRST_MESSAGE_ID,
             },
         ));
-        let (hardware_commands, hardware_receiver) = std_mpsc::channel();
+        let (hardware_commands, hardware_receiver) =
+            std_mpsc::sync_channel(HARDWARE_COMMAND_CAPACITY);
         self.hardware_commands = Some(hardware_commands);
         self.hardware_running = true;
-        self.next_message_id = 0;
+        self.next_message_id = FIRST_MESSAGE_ID;
         self.roster_initialized = false;
         let joined = Participant {
             client_id: station_id(self.config.station),
             name: name.to_owned(),
         };
         self.participants = vec![joined.clone()];
-        let mut config = self.config.clone();
-        config.room = Some(room);
+        let config = self.config.clone();
         let hardware_events = self.hardware_event_sender.clone();
         let hardware_name = name.to_owned();
         let spawn_result = thread::Builder::new()
-            .name("picto-relay-radio".into())
+            .name(HARDWARE_THREAD_NAME.into())
             .spawn(move || {
                 let emit = |event| {
                     let _ = hardware_events.send(event);
                 };
-                if let Err(error) =
-                    run_live_backend(&config, &hardware_name, &hardware_receiver, &emit)
-                {
+                let result = crate::esp32::run(
+                    &config.port,
+                    config.channel,
+                    room,
+                    &hardware_name,
+                    &crate::worker::ProfileOptions {
+                        message: profile_message,
+                        color: profile_color,
+                    },
+                    &hardware_receiver,
+                    &emit,
+                );
+                if let Err(error) = result {
                     emit(LiveEvent::Error {
                         code: "hardware_failed",
                         message: error.to_string(),
@@ -565,14 +646,20 @@ impl LiveBroker {
             .ok_or("physical radio is not running")
             .and_then(|sender| {
                 sender
-                    .send(LiveCommand::SendMessage { message_id, bitmap })
-                    .map_err(|_| "physical radio command channel closed")
+                    .try_send(LiveCommand::SendMessage { message_id, bitmap })
+                    .map_err(|error| match error {
+                        std_mpsc::TrySendError::Full(_) => "physical radio command queue is full",
+                        std_mpsc::TrySendError::Disconnected(_) => {
+                            "physical radio command channel closed"
+                        }
+                    })
             });
         if let Err(message) = result {
             self.send_to(ServerWireEvent::Error {
                 code: "hardware_unavailable",
                 message: message.into(),
             });
+            self.send_to(ServerWireEvent::DeliveryTimedOut { message_id });
         }
     }
 
@@ -589,31 +676,38 @@ impl LiveBroker {
 
     fn shutdown_hardware(&mut self) {
         if let Some(sender) = self.hardware_commands.take() {
-            let _ = sender.send(LiveCommand::Shutdown);
+            let _ = sender.try_send(LiveCommand::Shutdown);
         }
     }
 
-    fn handle_hardware_event(&mut self, event: LiveEvent) {
-        match &event {
-            LiveEvent::RoomCounts { counts } => {
-                self.passive_counts = (*counts).map(usize::from);
-                self.publish_rooms();
-                return;
+    fn update_station(&mut self, station: picto_relay_codec::MacAddress) {
+        let previous = station_id(self.config.station);
+        self.config.station = station;
+        for p in &mut self.participants {
+            if p.client_id == previous {
+                p.client_id = station_id(station);
             }
-            LiveEvent::RoomObserverError { message } => {
-                self.passive_counts = [0; ROOM_COUNT as usize];
-                self.publish_rooms();
-                warn!(%message, "passive room observer stopped; retrying");
-                return;
-            }
-            _ => {}
         }
+        self.publish_rooms();
+    }
+
+    fn handle_hardware_event(&mut self, event: LiveEvent) {
         let wire_event = match event {
+            LiveEvent::Profile(profile) => ServerWireEvent::Profile {
+                station_id: station_id(profile.station),
+                name: profile.nickname,
+                profile_message: profile.message,
+                profile_color: profile.color,
+            },
+            LiveEvent::Station { station } => {
+                self.update_station(station);
+                return;
+            }
             LiveEvent::State { state, detail } => ServerWireEvent::BackendState { state, detail },
             LiveEvent::Ready { host, room, slot } => {
                 let detail = format!(
                     "joined Room {} hosted by {host} in slot {slot}",
-                    char::from(b'A' + room)
+                    char::from(FIRST_ROOM_LETTER + room)
                 );
                 self.send_to(ServerWireEvent::BackendState {
                     state: "ready",
@@ -662,7 +756,9 @@ impl LiveBroker {
                 station_id,
                 name,
                 message_id,
-                bitmap: STANDARD.encode(bitmap),
+                palette_bitmap: (bitmap.len() == PALETTE_BITMAP_BYTES)
+                    .then(|| STANDARD.encode(&bitmap)),
+                bitmap: STANDARD.encode(crate::bitmap::monochrome_bitmap(&bitmap)),
             },
             LiveEvent::Delivered { message_id } => ServerWireEvent::Delivered { message_id },
             LiveEvent::DeliveryTimedOut { message_id } => {
@@ -689,7 +785,6 @@ impl LiveBroker {
                     detail: "physical station left the PictoChat room".into(),
                 }
             }
-            LiveEvent::RoomCounts { .. } | LiveEvent::RoomObserverError { .. } => unreachable!(),
         };
         self.send_to(wire_event);
         self.publish_rooms();
@@ -738,13 +833,15 @@ impl LiveBroker {
 
     fn room_summaries(&self) -> Vec<RoomSummary> {
         let mut rooms = empty_room_summaries();
-        for (room, count) in rooms.iter_mut().zip(self.passive_counts) {
-            room.participant_count = count;
+        for (room, count) in rooms.iter_mut().zip(self.discovered) {
+            room.observed = count != ROOM_UNOBSERVED && !self.hardware_running;
+            room.participant_count = if room.observed { usize::from(count) } else { 0 };
         }
         if let Some((_, client)) = &self.client {
             let room = &mut rooms[usize::from(client.room)];
+            room.observed = self.roster_initialized;
             room.participants.clone_from(&self.participants);
-            room.participant_count = room.participant_count.max(room.participants.len());
+            room.participant_count = room.participants.len();
         }
         rooms
     }
@@ -754,18 +851,20 @@ impl LiveBroker {
     }
 }
 
-fn station_id(mac: picto_relay_codec::MacAddress) -> u32 {
-    let octets = mac.octets();
-    u32::from_be_bytes([octets[2], octets[3], octets[4], octets[5]])
+/// Derives a participant identifier from the low four octets of a MAC,
+/// skipping the two leading vendor octets.
+pub(crate) fn station_id(mac: picto_relay_codec::MacAddress) -> u32 {
+    let [_, _, device_octets @ ..] = mac.octets();
+    u32::from_be_bytes(device_octets)
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::worker::{Esp32Config, LiveEvent, LiveParticipant};
     use picto_relay_codec::MacAddress;
-    use picto_relay_join::{LiveConfig, LiveEvent, LiveParticipant};
 
     use super::{
-        BITMAP_BYTES, BrokerHandle, CLIENT_EVENT_CAPACITY, ClientId, ConnectedClient, LiveBroker,
+        BITMAP_BYTES, BrokerHandle, CLIENT_EVENT_CAPACITY, ClientId, ConnectedClient, Esp32Broker,
     };
     use crate::protocol::ServerWireEvent;
 
@@ -919,10 +1018,53 @@ mod tests {
     }
 
     #[test]
+    fn stale_live_session_should_not_control_its_replacement() {
+        let (_commands, receiver) = tokio::sync::mpsc::channel(1);
+        let (room_updates, _) = tokio::sync::watch::channel(super::empty_room_summaries());
+        let mut broker = Esp32Broker::new(Esp32Config::default(), receiver, room_updates);
+        let first = broker.allocate_client_id().unwrap();
+        let second = broker.allocate_client_id().unwrap();
+        let (events, _receiver) = tokio::sync::mpsc::channel(CLIENT_EVENT_CAPACITY);
+        broker.client = Some((
+            second,
+            ConnectedClient {
+                name: "new session".into(),
+                room: 0,
+                events,
+                next_message_id: 0,
+            },
+        ));
+        let (commands, radio) = std::sync::mpsc::sync_channel(8);
+        broker.hardware_commands = Some(commands);
+        broker.unregister(first);
+        broker.send_message(first, vec![0; BITMAP_BYTES]);
+        assert_eq!(broker.client.as_ref().map(|(id, _)| *id), Some(second));
+        assert!(matches!(
+            radio.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        broker.send_message(second, vec![0; BITMAP_BYTES]);
+        assert!(matches!(
+            radio.try_recv(),
+            Ok(crate::worker::LiveCommand::SendMessage { .. })
+        ));
+    }
+
+    #[test]
+    fn exhausted_live_session_ids_should_not_wrap() {
+        let (_commands, receiver) = tokio::sync::mpsc::channel(1);
+        let (room_updates, _) = tokio::sync::watch::channel(super::empty_room_summaries());
+        let mut broker = Esp32Broker::new(Esp32Config::default(), receiver, room_updates);
+        broker.next_client_id = Some(u32::MAX);
+        assert_eq!(broker.allocate_client_id(), Some(ClientId(u32::MAX)));
+        assert_eq!(broker.allocate_client_id(), None);
+    }
+
+    #[test]
     fn live_broker_should_publish_physical_join_names() {
         let (_commands, receiver) = tokio::sync::mpsc::channel(1);
         let (room_updates, _rooms) = tokio::sync::watch::channel(super::empty_room_summaries());
-        let mut broker = LiveBroker::new(LiveConfig::default(), receiver, room_updates);
+        let mut broker = Esp32Broker::new(Esp32Config::default(), receiver, room_updates);
         let (events, mut event_receiver) = tokio::sync::mpsc::channel(CLIENT_EVENT_CAPACITY);
         broker.client = Some((
             ClientId(1),
@@ -934,7 +1076,7 @@ mod tests {
             },
         ));
         broker.participants = vec![crate::protocol::Participant {
-            client_id: super::station_id(LiveConfig::default().station),
+            client_id: super::station_id(Esp32Config::default().station),
             name: "Relay".into(),
         }];
         broker.roster_initialized = true;
@@ -943,7 +1085,7 @@ mod tests {
             room: 0,
             participants: vec![
                 LiveParticipant {
-                    station: LiveConfig::default().station,
+                    station: Esp32Config::default().station,
                     name: "Relay".into(),
                 },
                 LiveParticipant {
@@ -967,7 +1109,7 @@ mod tests {
     fn live_broker_should_publish_physical_leave_names() {
         let (_commands, receiver) = tokio::sync::mpsc::channel(1);
         let (room_updates, _rooms) = tokio::sync::watch::channel(super::empty_room_summaries());
-        let mut broker = LiveBroker::new(LiveConfig::default(), receiver, room_updates);
+        let mut broker = Esp32Broker::new(Esp32Config::default(), receiver, room_updates);
         let (events, mut event_receiver) = tokio::sync::mpsc::channel(CLIENT_EVENT_CAPACITY);
         broker.client = Some((
             ClientId(1),
@@ -999,19 +1141,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn live_broker_should_publish_passive_room_counts_without_a_session() {
-        let (_commands, receiver) = tokio::sync::mpsc::channel(1);
-        let (room_updates, _rooms) = tokio::sync::watch::channel(super::empty_room_summaries());
-        let mut broker = LiveBroker::new(LiveConfig::default(), receiver, room_updates);
-
-        broker.handle_hardware_event(LiveEvent::RoomCounts {
-            counts: [1, 0, 2, 0],
-        });
-
-        assert_eq!(broker.room_summaries()[2].participant_count, 2);
-    }
-
     fn drain(events: &mut tokio::sync::mpsc::Receiver<crate::protocol::ServerEnvelope>) {
         while events.try_recv().is_ok() {}
     }
@@ -1025,5 +1154,22 @@ mod tests {
                 return envelope.event;
             }
         }
+    }
+    #[test]
+    fn passive_counts_publish_without_a_session_and_expire_to_unknown() {
+        let (_commands, receiver) = tokio::sync::mpsc::channel(1);
+        let (updates, rooms) = tokio::sync::watch::channel(super::empty_room_summaries());
+        let mut broker = Esp32Broker::new(Esp32Config::default(), receiver, updates);
+        broker.discovered = [2, 255, 255, 255];
+        broker.publish_rooms();
+        assert!(rooms.has_changed().unwrap());
+        assert_eq!(rooms.borrow()[0].participant_count, 2);
+        assert!(rooms.borrow()[0].observed);
+        assert!(rooms.borrow()[0].participants.is_empty());
+        assert!(!rooms.borrow()[1].observed);
+        broker.discovered = [255; 4];
+        broker.publish_rooms();
+        assert!(!rooms.borrow()[0].observed);
+        assert_eq!(rooms.borrow()[0].participant_count, 0);
     }
 }

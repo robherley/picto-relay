@@ -1,19 +1,68 @@
-use crate::{DecodeError, MacAddress};
+use crate::{DecodeError, MacAddress, read_word_swapped_mac, word_swapped_mac};
+
+// Drawing surface geometry.
 
 /// Width of the native `PictoChat` drawing surface in pixels.
 pub const DRAWING_WIDTH: usize = 256;
 /// Maximum height of the native `PictoChat` drawing surface in pixels.
 pub const DRAWING_HEIGHT: usize = 80;
-/// Bytes preceding the native tiled drawing payload.
-pub const DRAWING_METADATA_BYTES: usize = 36;
-/// Bytes used for each encoded sixteen-row drawing band.
-pub const DRAWING_BAND_BYTES: usize = 2_048;
-
-const TILE_WIDTH: usize = 8;
-const TILE_HEIGHT: usize = 8;
-const TILE_BYTES: usize = 32;
-const TILES_PER_ROW: usize = DRAWING_WIDTH / TILE_WIDTH;
+/// Pixel rows in one drawing band; drawings grow in whole bands.
+pub const DRAWING_BAND_HEIGHT: usize = 16;
+/// Largest number of drawing bands in one message.
+const MAX_BANDS: usize = DRAWING_HEIGHT / DRAWING_BAND_HEIGHT;
+/// Pixels on the full, zero-padded drawing canvas.
 const PIXEL_COUNT: usize = DRAWING_WIDTH * DRAWING_HEIGHT;
+
+// 4bpp pixel packing.
+
+/// Bits used by one palette index.
+const BITS_PER_PIXEL: u32 = 4;
+/// Mask selecting one palette index; also the largest valid palette index.
+const PIXEL_MASK: u8 = (1 << BITS_PER_PIXEL) - 1;
+/// Pixels packed into each drawing byte (low nibble left, high nibble right).
+const PIXELS_PER_BYTE: usize = 2;
+/// Palette index of a transparent/white pixel in observed drawings.
+const TRANSPARENT_PALETTE_INDEX: u8 = 0;
+/// Encoded bytes covering one full-width pixel row.
+const ROW_BYTES: usize = DRAWING_WIDTH / PIXELS_PER_BYTE;
+/// Bytes used for each encoded sixteen-row drawing band.
+pub const DRAWING_BAND_BYTES: usize = DRAWING_BAND_HEIGHT * ROW_BYTES;
+
+// Nintendo DS tile layout.
+
+/// Width of one Nintendo DS tile in pixels.
+const TILE_WIDTH: usize = 8;
+/// Height of one Nintendo DS tile in pixels.
+const TILE_HEIGHT: usize = 8;
+/// Encoded bytes covering one pixel row of a tile.
+const TILE_ROW_BYTES: usize = TILE_WIDTH / PIXELS_PER_BYTE;
+/// Encoded bytes in one 4bpp tile.
+const TILE_BYTES: usize = TILE_ROW_BYTES * TILE_HEIGHT;
+/// Tiles across the drawing surface.
+const TILES_PER_ROW: usize = DRAWING_WIDTH / TILE_WIDTH;
+
+// Message metadata layout.
+
+/// Two-byte metadata prefix captured from a real client; observed, meaning unknown.
+const OPAQUE_METADATA_PREFIX: [u8; 2] = [0x03, 0x02];
+/// Offset of the sender MAC, stored as three little-endian 16-bit words.
+const METADATA_SENDER_OFFSET: usize = OPAQUE_METADATA_PREFIX.len();
+/// End of the sender MAC and start of the remaining opaque metadata.
+const METADATA_SENDER_END: usize = METADATA_SENDER_OFFSET + crate::MAC_ADDRESS_LEN;
+/// Opaque metadata bytes following the sender MAC.
+const OPAQUE_METADATA_TAIL_BYTES: usize = 28;
+/// Bytes preceding the native tiled drawing payload.
+pub const DRAWING_METADATA_BYTES: usize = METADATA_SENDER_END + OPAQUE_METADATA_TAIL_BYTES;
+/// Leading nonzero part of the opaque metadata after the sender MAC, replayed verbatim
+/// from a captured client drawing; observed, meaning unknown. The rest of the opaque
+/// tail is zero.
+const OPAQUE_METADATA_AFTER_SENDER: [u8; 12] = [
+    0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x01, 0x04, 0x09, 0x0b, 0x10, 0x1b,
+];
+/// End of the replayed opaque metadata within the metadata block.
+const OPAQUE_METADATA_AFTER_SENDER_END: usize =
+    METADATA_SENDER_END + OPAQUE_METADATA_AFTER_SENDER.len();
+const _: () = assert!(OPAQUE_METADATA_AFTER_SENDER.len() <= OPAQUE_METADATA_TAIL_BYTES);
 
 /// Encodes a 16- through 80-row, 4bpp native `PictoChat` drawing.
 ///
@@ -26,29 +75,28 @@ const PIXEL_COUNT: usize = DRAWING_WIDTH * DRAWING_HEIGHT;
 /// Returns [`DecodeError::InvalidMessage`] unless the input contains one through
 /// five complete drawing bands and every palette index fits in four bits.
 pub fn encode_message(sender: MacAddress, pixels: &[u8]) -> Result<Vec<u8>, DecodeError> {
-    if pixels.is_empty() || pixels.len() % DRAWING_WIDTH != 0 {
+    if pixels.is_empty() || !pixels.len().is_multiple_of(DRAWING_WIDTH) {
         return Err(DecodeError::InvalidMessage(
             "drawing must contain complete 256-pixel rows",
         ));
     }
     let height = pixels.len() / DRAWING_WIDTH;
-    if height > DRAWING_HEIGHT || height % 16 != 0 {
+    if height > DRAWING_HEIGHT || !height.is_multiple_of(DRAWING_BAND_HEIGHT) {
         return Err(DecodeError::InvalidMessage(
             "drawing height must be 16 through 80 rows in sixteen-row bands",
         ));
     }
-    if pixels.iter().any(|&pixel| pixel > 0x0f) {
+    if pixels.iter().any(|&pixel| pixel > PIXEL_MASK) {
         return Err(DecodeError::InvalidMessage(
             "drawing palette indices must fit in four bits",
         ));
     }
 
-    let mac = sender.octets();
-    let mut message = vec![0; DRAWING_METADATA_BYTES + height * DRAWING_WIDTH / 2];
-    message[..20].copy_from_slice(&[
-        0x03, 0x02, mac[1], mac[0], mac[3], mac[2], mac[5], mac[4], 0x00, 0x04, 0x00, 0x00, 0x00,
-        0x00, 0x01, 0x04, 0x09, 0x0b, 0x10, 0x1b,
-    ]);
+    let mut message = vec![0; DRAWING_METADATA_BYTES + height * ROW_BYTES];
+    message[..METADATA_SENDER_OFFSET].copy_from_slice(&OPAQUE_METADATA_PREFIX);
+    message[METADATA_SENDER_OFFSET..METADATA_SENDER_END].copy_from_slice(&word_swapped_mac(sender));
+    message[METADATA_SENDER_END..OPAQUE_METADATA_AFTER_SENDER_END]
+        .copy_from_slice(&OPAQUE_METADATA_AFTER_SENDER);
 
     for tile_y in 0..height / TILE_HEIGHT {
         for tile_x in 0..TILES_PER_ROW {
@@ -56,12 +104,12 @@ pub fn encode_message(sender: MacAddress, pixels: &[u8]) -> Result<Vec<u8>, Deco
                 DRAWING_METADATA_BYTES + (tile_y * TILES_PER_ROW + tile_x) * TILE_BYTES;
             for row_in_tile in 0..TILE_HEIGHT {
                 let y = tile_y * TILE_HEIGHT + row_in_tile;
-                for pair_in_row in 0..(TILE_WIDTH / 2) {
-                    let x = tile_x * TILE_WIDTH + pair_in_row * 2;
+                for pair_in_row in 0..TILE_ROW_BYTES {
+                    let x = tile_x * TILE_WIDTH + pair_in_row * PIXELS_PER_BYTE;
                     let left = pixels[y * DRAWING_WIDTH + x];
                     let right = pixels[y * DRAWING_WIDTH + x + 1];
-                    message[tile_offset + row_in_tile * (TILE_WIDTH / 2) + pair_in_row] =
-                        left | (right << 4);
+                    message[tile_offset + row_in_tile * TILE_ROW_BYTES + pair_in_row] =
+                        left | (right << BITS_PER_PIXEL);
                 }
             }
         }
@@ -105,7 +153,7 @@ impl PictoChatMessage {
             return Err(DecodeError::InvalidMessage("metadata is truncated"));
         };
         if drawing.is_empty()
-            || drawing.len() > DRAWING_BAND_BYTES * 5
+            || drawing.len() > DRAWING_BAND_BYTES * MAX_BANDS
             || drawing.len() % DRAWING_BAND_BYTES != 0
         {
             return Err(DecodeError::InvalidMessage(
@@ -114,19 +162,19 @@ impl PictoChatMessage {
         }
         let metadata = <[u8; DRAWING_METADATA_BYTES]>::try_from(metadata)
             .map_err(|_| DecodeError::InvalidMessage("metadata is truncated"))?;
-        let encoded_height = drawing.len() / (DRAWING_WIDTH / 2);
-        let mut pixels = vec![0; PIXEL_COUNT];
+        let encoded_height = drawing.len() / ROW_BYTES;
+        let mut pixels = vec![TRANSPARENT_PALETTE_INDEX; PIXEL_COUNT];
         for (byte_offset, &packed) in drawing.iter().enumerate() {
             let tile_index = byte_offset / TILE_BYTES;
             let byte_in_tile = byte_offset % TILE_BYTES;
             let tile_y = tile_index / TILES_PER_ROW;
             let tile_x = tile_index % TILES_PER_ROW;
-            let row_in_tile = byte_in_tile / (TILE_WIDTH / 2);
-            let pair_in_row = byte_in_tile % (TILE_WIDTH / 2);
+            let row_in_tile = byte_in_tile / TILE_ROW_BYTES;
+            let pair_in_row = byte_in_tile % TILE_ROW_BYTES;
             let y = tile_y * TILE_HEIGHT + row_in_tile;
-            let x = tile_x * TILE_WIDTH + pair_in_row * 2;
-            pixels[y * DRAWING_WIDTH + x] = packed & 0x0f;
-            pixels[y * DRAWING_WIDTH + x + 1] = packed >> 4;
+            let x = tile_x * TILE_WIDTH + pair_in_row * PIXELS_PER_BYTE;
+            pixels[y * DRAWING_WIDTH + x] = packed & PIXEL_MASK;
+            pixels[y * DRAWING_WIDTH + x + 1] = packed >> BITS_PER_PIXEL;
         }
         Ok(Self {
             metadata,
@@ -144,14 +192,7 @@ impl PictoChatMessage {
     /// Returns the sender MAC encoded as three little-endian words in captured metadata.
     #[must_use]
     pub const fn sender(&self) -> MacAddress {
-        MacAddress([
-            self.metadata[3],
-            self.metadata[2],
-            self.metadata[5],
-            self.metadata[4],
-            self.metadata[7],
-            self.metadata[6],
-        ])
+        read_word_swapped_mac(&self.metadata, METADATA_SENDER_OFFSET)
     }
 
     /// Returns the number of encoded drawing rows before zero-padding to 80 rows.
@@ -180,7 +221,7 @@ impl PictoChatMessage {
     pub fn ink_bounds(&self) -> Option<PixelBounds> {
         let mut bounds = None;
         for (index, &palette_index) in self.pixels.iter().enumerate() {
-            if palette_index == 0 {
+            if palette_index == TRANSPARENT_PALETTE_INDEX {
                 continue;
             }
             let x = index % DRAWING_WIDTH;

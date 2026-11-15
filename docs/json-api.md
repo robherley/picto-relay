@@ -1,224 +1,208 @@
-# Picto Relay JSON API
+# Picto Relay REST API v1
 
-The versioned HTTP API is the programmatic interface to Picto Relay. The browser UI
-served at `/` uses the same endpoints.
+Base URL: `http://localhost:3001/api/v1`. The browser uses this API; WebSockets
+are optional. REST polling supports the complete session lifecycle.
 
-The server defaults to `memory` for hardware-free API development. It loops submitted
-drawings back as API events but does not simulate Nintendo packets or radio delivery.
-On Linux, select `ar9271` to attach the JSON API to the custom-firmware radio worker.
-That mode supports one API session because the current firmware represents one physical
-virtual station. The session may select any room A through D.
+| Operation | Endpoint |
+|---|---|
+| Formats, limits, and drawing bounds | `GET /status` |
+| Current room counts and roster | `GET /rooms` |
+| Join with nickname, personal message, and profile color | `POST /sessions` |
+| Send text or a drawing | `POST /sessions/{id}/messages` |
+| Drain queued events | `GET /sessions/{id}/events` |
+| Leave | `DELETE /sessions/{id}` |
+| Optional live room snapshots | WebSocket `/rooms/ws` |
+| Optional session event stream | WebSocket `/sessions/{id}/events/ws` |
 
-Start the server:
+## Run
+
+The default `memory` backend loops drawings back to clients in the same room. It
+does not emulate physical profile exchange or prove radio delivery.
 
 ```sh
 cargo run -p picto-relay-server
 ```
 
-Physical Raspberry Pi launch:
+For the connected ESP32:
 
 ```sh
-sudo /home/rob/.local/bin/picto-relay-server \
-  --backend ar9271 \
-  --prepare \
-  --interface wlan1 \
-  --channel 1 \
-  --room A
+cargo run -p picto-relay-server -- \
+  --backend esp32 --serial /dev/cu.usbserial-0001 --channel 1
 ```
 
-Creating the physical session starts scanning and association in a dedicated radio
-thread. Stream its events for `backend_state` progress. `session_ready` is emitted
-only after the DS host completes both profile passes and the nickname is live.
+The physical backend supports one API session at a time, joining a room hosted
+by a DS. See [firmware and USB protocol](esp32-usb.md).
 
-The default base URL is `http://localhost:3001/api/v1`.
+## Formats and limits
 
-## Use the browser UI
+`GET /status` reports:
 
-Open `http://HOST:3001/`. The page receives room rosters and session events over
-WebSockets, lets the user join rooms A–D, and packs typed or hand-drawn canvas content
-into the bitmap format below. No frontend build step or external assets are required.
+- `version`, `backend`
+- `bitmap_width: 256`, `bitmap_height: 96`
+- `bitmap_bytes: 3072`, `bitmap_encoding: "base64_row_major_mono_1bpp_msb_first"`
+- `palette_bitmap_bytes: 12288`, `palette_bitmap_encoding: "base64_row_major_indexed_4bpp_low_nibble_first"`
+- `ink_indices: [1,3,4,5,6,7,8,9,10,11,12,13,14,15]`, `rainbow_text: true`
+- `text_max_units: 220`, `profile_message_max_units: 26`, `profile_color_max: 15`
+- `drawable_regions: [[80,0,172,16],[24,16,228,64]]`
 
-The physical outbound encoder preserves one to five native 256x16 PictoChat drawing
-bands. A sixteen-slot circular firmware window streams larger messages and retries a
-reply when the host acknowledgement marks the virtual slot as failed. Incoming and
-outgoing physical messages may use the full native 256x80 surface and are padded to
-the API's 256x96 contract.
+Regions are `[x,y,width,height]`, measured conservatively from the user's DS
+sample. The first region avoids the name tag; the second is the lower drawing
+area. The native image is at most 256×80; the API retains its padded 256×96
+surface. Bitmap callers should keep ink inside these regions. Legacy taller
+bitmaps are fitted to the native height by the encoder. Incoming pixels are
+preserved, including ink outside the suggested composer bounds.
 
-## Inspect the gateway
-
-```sh
-curl http://localhost:3001/api/v1/status
-```
-
-Example response:
-
-```json
-{
-  "version": 1,
-  "backend": "memory",
-  "bitmap_width": 256,
-  "bitmap_height": 96,
-  "bitmap_bytes": 3072,
-  "bitmap_encoding": "base64_row_major_mono_1bpp_msb_first"
-}
-```
-
-## List rooms
+## Discover rooms
 
 ```sh
 curl http://localhost:3001/api/v1/rooms
 ```
 
-The response always contains rooms `0` through `3`, corresponding to A through D.
-`participant_count` is available before joining: the physical backend passively reads
-Nintendo room beacons and expires a room after two seconds without an advertisement.
-The `participants` roster contains identities currently known to the relay. In memory
-mode these are API clients. With the physical backend, the active room contains the host
-`c34` slot roster joined to nicknames from host-rebroadcast `e30` profiles. A station
-whose profile has not yet been observed uses a stable `DS <mac>` label.
+The response contains `version: 1` and four `rooms` (0=A, 1=B, 2=C, 3=D):
 
 ```json
-{
-  "version": 1,
-  "rooms": [
-    {"room":0,"participant_count":2,"participants":[{"client_id":4083630471,"name":"Rob"},{"client_id":3209822209,"name":"Relay"}]},
-    {"room":1,"participant_count":0,"participants":[]},
-    {"room":2,"participant_count":0,"participants":[]},
-    {"room":3,"participant_count":0,"participants":[]}
-  ]
-}
+{"observed":true,"room":0,"participant_count":2,"participants":[{"client_id":4083630471,"name":"Rob"},{"client_id":3209822209,"name":"Relay"}]}
 ```
 
-## Create a session
+While idle, the server scans Wi-Fi channels 1–13 every five seconds, listening
+for 250 ms on each channel. `--channel` is the preferred channel and is scanned
+first (including channel 14 if explicitly selected). Names require joining;
+a positive count with an empty `participants` array is valid. `observed: false`
+means unknown, not an empty room. Passive discovery pauses during a session,
+whose roster then supplies its count and names. Joining scans for the selected
+room and tunes to its observed channel before authenticating. A DS must already
+be hosting that room.
+
+## Join with profile settings
 
 ```sh
-curl -i \
-  -H 'content-type: application/json' \
-  -d '{"name":"API Relay","room":0}' \
+curl -i -H 'content-type: application/json' \
+  -d '{"name":"API Relay","room":0,"profile_message":"Hello from REST","profile_color":2}' \
   http://localhost:3001/api/v1/sessions
 ```
 
-The `201 Created` response contains the `session_id` used by the other endpoints:
+Response: HTTP 201 with `{"version":1,"session_id":1,"room":0}`.
 
-```json
-{"version":1,"session_id":1,"room":0}
-```
+- `name`: required; whitespace is trimmed and the name normalized by the server.
+- `room`: optional, defaults to the server's `--room`; range 0–3.
+- `profile_message`: optional, defaults to empty; at most 26 UTF-16 code units,
+  with no embedded NUL. Supplementary Unicode characters use two units.
+- `profile_color`: optional, defaults to the original wire value 0; range 0–15.
 
-`room` is optional for compatibility and uses the server's `--room` value when
-omitted. Explicit values must be `0` through `3`.
+| Index | Profile color | Index | Profile color |
+|---:|---|---:|---|
+| 0 | Gray/default | 8 | Dark green |
+| 1 | Brown | 9 | Teal |
+| 2 | Red | 10 | Light blue |
+| 3 | Pink | 11 | Blue |
+| 4 | Orange | 12 | Dark blue |
+| 5 | Yellow | 13 | Dark purple |
+| 6 | Lime | 14 | Purple |
+| 7 | Green | 15 | Magenta |
 
-## Send a drawing
+Labels follow the [libnds theme table](https://github.com/devkitPro/libnds/blob/master/include/nds/system.h).
+Red and the full 26-letter personal message were verified on a real DS.
+Profile settings are advertised in both identity passes, separately from drawings.
+Changing them requires leaving and creating a new session. HTTP 201 allocates the
+session; the physical `session_ready` event confirms the completed profile exchange.
 
-`bitmap` is exactly 3,072 decoded bytes: a 256x96 row-major monochrome bitmap,
-eight pixels per byte, most-significant bit first.
+## Send text
 
 ```sh
-curl -i \
-  -H 'content-type: application/json' \
-  -d '{"bitmap":"BASE64_BITMAP"}' \
+curl -i -H 'content-type: application/json' \
+  -d '{"text":"Hello from the REST API","ink":"rainbow"}' \
   http://localhost:3001/api/v1/sessions/1/messages
 ```
 
-The `202 Accepted` response confirms that the message entered the bounded broker
-queue, not that a physical DS received it:
+`ink` defaults to black (`1`). Supply a numeric fixed pen index from `/status`, or
+`"rainbow"`. Profile colors and drawing ink are different palettes.
+
+Text is trimmed, word-wrapped around the name-tag area, and rendered with the
+browser's shared bitmap font. Explicit newlines are preserved; oversized words
+can split. The renderer tries large text, then compact text. Unsupported glyphs
+use the same fallback box as the browser. Text must contain 1–220 UTF-16 units,
+no NULs, and fit the drawing area. Rainbow text uses horizontal color bands.
+
+## Send a drawing
+
+Supply exactly one format: `text`, `bitmap`, or `palette_bitmap`. `ink` applies
+only to text; a bitmap already specifies every pixel's ink.
+
+Monochrome: base64 encoding of exactly 3,072 bytes, row-major, eight pixels per
+byte, most-significant bit first. Zero is paper, one is black.
 
 ```json
-{"version":1,"status":"queued"}
+{"bitmap":"BASE64_MONOCHROME_BYTES"}
 ```
 
-Delivery is reported later as an event.
-
-## Receive events
-
-The preferred event transport is a WebSocket connection:
-
-```text
-ws://localhost:3001/api/v1/sessions/1/events/ws
-```
-
-Each server text frame contains one `ServerEnvelope` object. There is no wrapper or
-client acknowledgement message:
+Color: base64 encoding of exactly 12,288 bytes, row-major, two 4-bit indices per
+byte. The left pixel occupies the low nibble. Byte `0xf3` means indices 3 then 15.
 
 ```json
-{"version":1,"type":"backend_state","state":"scanning","detail":"scanning for Room A"}
+{"palette_bitmap":"BASE64_INDEXED_BYTES"}
 ```
 
-Only one event consumer may own a session queue at a time. While its WebSocket is
-attached, the polling endpoint below returns `409 session_stream_attached`. Closing
-the socket returns the queue to the session so a reconnect or polling client can
-resume without creating a new physical station.
+Indices: 0 paper, 1 black, 3–15 rainbow shades. Index 2 is preserved but its meaning
+is unknown and the browser displays it as black. RGB previews are approximate;
+wire indices are lossless. Color uses the same native radio payload size as mono.
 
-The non-blocking REST endpoint remains available for simple scripts and existing API
-clients:
+Both formats use `POST /sessions/{id}/messages`. HTTP 202 returns
+`{"version":1,"status":"queued"}`. This acknowledges queueing, not DS delivery.
+Blank physical drawings are rejected by the native encoder through error events.
+UI brush selection, erasing, and clearing are local editor actions; an API client
+implements these by changing its next bitmap. There is no shared server-side canvas.
+
+## Receive and track delivery using REST
 
 ```sh
 curl http://localhost:3001/api/v1/sessions/1/events
 ```
 
-This non-blocking endpoint drains up to 32 queued events. Poll it again when `events`
-is empty. Events are returned as versioned JSON envelopes:
+Polling drains up to 32 queued events and returns `{"version":1,"events":[...]}`.
+Poll again when the list is empty. Examples of individual events:
 
 ```json
-{
-  "version": 1,
-  "events": [
-    {"version":1,"type":"session_ready","client_id":1},
-    {"version":1,"type":"participant_joined","room":0,"participant":{"client_id":1,"name":"API Relay"}},
-    {"version":1,"type":"participants","room":0,"participants":[{"client_id":1,"name":"API Relay"}]},
-    {"version":1,"type":"message","station_id":1,"name":"API Relay","message_id":0,"bitmap":"..."},
-    {"version":1,"type":"delivered","message_id":0}
-  ]
-}
+{"version":1,"type":"session_ready","client_id":1}
+{"version":1,"type":"profile","station_id":4083630471,"name":"Rob","profile_message":"abcdefghijklmnopqrstuvwxyz","profile_color":11}
+{"version":1,"type":"message","station_id":4083630471,"name":"Rob","message_id":0,"bitmap":"...","palette_bitmap":"..."}
+{"version":1,"type":"delivered","message_id":0}
 ```
 
-Possible event types are `session_ready`, `participants`, `participant_joined`,
-`participant_left`, `message`, `delivered`, `delivery_timed_out`, `backend_state`,
-and `error`. Lifecycle events carry the affected `room` and complete `participant`
-identity. Roster snapshots remain authoritative; lifecycle events describe the delta
-that led to a new snapshot. Learning a better nickname for an existing station does
-not emit a false leave and rejoin because membership is compared by `client_id`.
+`profile` is emitted when a physical profile is first observed or its nickname,
+message, or color changes. The duplicate identity pass is suppressed. Its
+`station_id` matches the roster's `client_id` for that physical station. Profiles
+are event updates, not a historical REST profile database.
 
-With the physical backend,
-`delivered` means the DS host first echoed the submitted drawing's matching `d0a`
-announcement and then rebroadcast a complete drawing from the virtual station. This
-two-part correlation prevents a locally observed transmission from being mistaken
-for DS acceptance. If that proof is not observed before the deadline, the broker emits
-`delivery_timed_out`.
+Every drawing event includes legacy monochrome `bitmap` (all nonzero indices
+become black). Color messages also include lossless `palette_bitmap`; prefer that
+field when present. Text submissions arrive as rendered drawing events.
 
-## Stream room rosters
+Other events: `backend_state`, `participants`, `participant_joined`,
+`participant_left`, `delivery_timed_out`, and `error`. Roster snapshots are
+authoritative. Physical `delivered` requires the matching announcement and complete
+host-rebroadcast drawing; timeouts are reported separately. Message IDs belong to
+the sending station/session, not a globally unique namespace.
 
-Connect to:
+Each session has one event consumer. Attaching its WebSocket makes REST polling
+return HTTP 409 `session_stream_attached`. Closing the socket restores polling.
+Room WebSocket observers do not own the session queue and may coexist freely.
+Queues are bounded: consume events continuously while connected.
 
-```text
-ws://localhost:3001/api/v1/rooms/ws
-```
-
-The server immediately sends the same complete `RoomsResponse` returned by
-`GET /api/v1/rooms`, then sends a replacement snapshot whenever any room roster
-changes. This stream is independent of session ownership, so any number of browser or
-API observers may subscribe. The REST room endpoint remains available for one-shot
-inspection.
-
-## Delete a session
+## Leave
 
 ```sh
 curl -i -X DELETE http://localhost:3001/api/v1/sessions/1
 ```
 
-The server returns `204 No Content` and disconnects that virtual station.
+HTTP 204 disconnects the virtual station and releases the session. The ESP32
+returns to passive discovery after the worker releases the radio.
 
 ## Errors
 
-API-generated errors have a stable JSON shape:
-
-```json
-{
-  "version": 1,
-  "code": "unknown_session",
-  "message": "session 42 does not exist"
-}
-```
-
-Current codes include `invalid_name`, `invalid_bitmap`, `invalid_bitmap_size`,
-`invalid_room`, `unknown_session`, `session_stream_attached`, `broker_busy`, and
-`broker_unavailable`.
+Application errors use `{"version":1,"code":"...","message":"..."}`.
+Common codes include `invalid_name`, `invalid_room`, `invalid_profile_message`,
+`invalid_profile_color`, `invalid_text`, `invalid_message`, `invalid_bitmap`,
+`invalid_bitmap_size`, `unknown_session`, `session_stream_attached`, `broker_busy`,
+and `broker_unavailable`. Malformed JSON or wrong JSON types may be rejected by
+Axum before the application handler. Physical connection/encoding failures can
+also arrive as asynchronous `error` and `delivery_timed_out` events.

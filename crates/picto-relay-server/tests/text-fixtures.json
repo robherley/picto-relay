@@ -1,0 +1,32 @@
+[
+  {
+    "text": "hello beautiful world",
+    "ink": 1,
+    "hash": 508927093
+  },
+  {
+    "text": "HELLO WORLD",
+    "ink": 5,
+    "hash": 3326715365
+  },
+  {
+    "text": "HELLO WORLD",
+    "ink": "rainbow",
+    "hash": 1090953277
+  },
+  {
+    "text": "First\nSecond\nThird",
+    "ink": 11,
+    "hash": 652055337
+  },
+  {
+    "text": "ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "ink": "rainbow",
+    "hash": 822173137
+  },
+  {
+    "text": "Text with ?! punctuation and 123",
+    "ink": 3,
+    "hash": 2957181541
+  }
+]

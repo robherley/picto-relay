@@ -7,7 +7,7 @@ profile publication, outbound drawing delivery, and host-rebroadcast reception.
 
 ## Capture provenance
 
-`captures/blueberry/01-two-ds-baseline.pcap` was recorded on Raspberry Pi `blueberry`
+`captures/pi/01-two-ds-baseline.pcap.gz` was recorded on Raspberry Pi `pi`
 with an AR9271 (`ath9k_htc`, firmware 1.3). It contains one DS-hosted Room A session:
 
 | Item | Observed value |
@@ -24,7 +24,7 @@ The checked-in fixtures exclude radiotap and FCS. Their originating radiotap hea
 advertised 2 Mbps, short preamble, and an included FCS.
 
 The canonical outbound capture is
-`captures/blueberry/1787275056402-virtual-client-outbound-dot-padded-final.pcap`.
+`captures/pi/1787275056402-virtual-client-outbound-dot-padded-final.pcap.gz`.
 It contains a complete join by virtual station `00:09:bf:52:00:01`, profile
 initialization, a generated 2,084-byte dot drawing, and the real host's complete
 fourteen-fragment rebroadcast. Its JSON sidecar records counts and SHA-256.
@@ -127,7 +127,7 @@ generated profiles, two completion records, and steady idle reply. This preserve
 observed SIFS response window while allowing the profile MAC, participant slot, and
 nickname to be generated in Rust for the active association.
 
-`session-state-fix-2.pcap` records the complete physical virtual-client milestone.
+`session-state-fix-2.pcap.gz` records the complete physical virtual-client milestone.
 The host admits slot 1, advances its beacon from one to two users, accepts both
 generated `PictoRelay` profile passes, sustains 1,404 clean firmware transmissions,
 and releases the client after firmware disarm and deauthentication. Direct observation
@@ -135,12 +135,12 @@ also confirmed that `PictoRelay` appeared in the physical DS participant list. T
 consolidated state machine is documented in
 [pictochat-protocol.md](pictochat-protocol.md).
 
-`1787275056402-virtual-client-outbound-dot-padded-final.pcap` extends that milestone
+`1787275056402-virtual-client-outbound-dot-padded-final.pcap.gz` extends that milestone
 through drawing delivery. The DS visibly rendered the generated dot and rebroadcast
 all fourteen drawing fragments. The earlier API timeout was a decoder error caused by
 the padded host final, not a radio-delivery failure.
 
-`20260820-two-dots-after-clean-rejoin-success.pcap` is the canonical repeated-send
+`20260820-two-dots-after-clean-rejoin-success.pcap.gz` is the canonical repeated-send
 milestone. After a clean leave and rejoin, the virtual station sent two drawings in
 one association without reloading the AR9271 driver or firmware. The physical DS
 visibly rendered both, the host echoed both `d0a` announcements, and the host
