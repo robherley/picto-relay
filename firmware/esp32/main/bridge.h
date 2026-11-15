@@ -24,14 +24,20 @@ void bridge_tick(void);
 void bridge_forward(const uint8_t *frame, size_t len);
 /* Any task: the RX copy queue was full. */
 void bridge_usb_drop(void);
+/* Any task: whether the host has turned frame capture on. */
+bool bridge_tracing(void);
+/* Control task: reports one frame to the host if capture is on. `len` bytes
+ * of a frame that was `air_len` bytes on the air; `sent` if we transmitted it. */
+void bridge_trace(const uint8_t *frame, size_t len, size_t air_len, uint32_t timestamp, bool sent);
 
 /* ---- Provided by platform.c -------------------------------------------- */
 
 void picto_platform_mac(uint8_t mac[6]);
 int64_t picto_platform_now(void);
 bool picto_platform_channel(uint8_t channel);
-/* Submits a raw 802.11 frame; false if the driver rejected it. */
-bool picto_platform_tx(const uint8_t *frame, size_t len);
+/* Submits a raw 802.11 frame, `delay_us` microseconds after the frame being
+ * received arrived (0: immediately); false if the driver rejected it. */
+bool picto_platform_tx(const uint8_t *frame, size_t len, uint32_t delay_us);
 /* Queues encoded bytes for the host without blocking; false if full. */
 bool picto_platform_usb(const uint8_t *bytes, size_t len);
 /* Stages `frame` as the prepared reply; len 0 discards any staged buffer. */

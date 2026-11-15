@@ -355,6 +355,12 @@ real host to complete both identity passes.
 
 ### Working state machine
 
+> Superseded. This scripted sequence was derived from rooms with one client and
+> is no longer what the firmware does; it stalled or was ignored once a second
+> client was present. See [Rooms with several clients](#rooms-with-several-clients)
+> for the current behaviour. The table is kept because its packet bytes remain
+> the verified reference for a lone client.
+
 The following is the interoperability-verified template selector. Duplicate or
 unrelated host packets receive idle replies without advancing the state.
 
@@ -618,6 +624,79 @@ This is an implementation limitation, not a demonstrated PictoChat protocol limi
 - Full profile color and birthday encoding rules.
 - Palette indices beyond observed black index 1.
 - Simultaneous multiple virtual stations on one adapter.
+
+## Rooms with several clients
+
+Observed on 2026-11-15 in a capture taken by the ESP32 itself (`--capture`) of
+a host DS, a second DS and the relay. These observations replaced the earlier
+scripted profile exchange, which was derived from host-plus-one-client captures
+and stalled or was ignored once a second client was present.
+
+**Everything a client sends is a transfer.** A profile is sent exactly like a
+drawing: a `d0a` announcement, the data in `e`-family fragments, a `d0a`
+completion. The host opens the transfer by echoing the announcement and relays
+each fragment to the other members. A client sends no data until it has seen
+that echo; a busy host silently drops fragments of a transfer it has not opened.
+
+**The first payload byte is the sender's slot**, in announcements, fragments
+and completions alike. The host copies it when relaying (the host's own packets
+carry 0), and the other members use it to tell whose packet it is. Earlier
+captures only ever had a client in slot 1, so this byte was mistaken for a
+constant. A drawing labelled with the wrong slot is displayed by the host and
+ignored by everyone else.
+
+**Joining:**
+
+1. The host adds the new station to the roster (`c34`). The client answers a
+   roster that lists it with a packet of the same shape, an empty member table,
+   and a trailing 16-bit count of the clients in the room: a real DS joining a
+   room that already held one client sent 2; one joining an empty room sends 1.
+   It sends this once (until acknowledged).
+2. About half a second later the client introduces itself: a profile transfer
+   whose record has subtype 0.
+3. Every member that hears a subtype 0 profile from somebody else answers with
+   its own profile, subtype 1. That is how a newcomer learns who is already in
+   the room, and why a member that stays silent is missing from the newcomer's
+   list. The host does the same.
+
+The host does not prompt any of this; the client does not wait for a particular
+host packet before each step.
+
+**Counters** run through a session across all of a client's transfers: the
+announcement's transfer counter is 1, 3, 5, … (its completion's is one more),
+and fragment frame numbers start at 1 and continue from transfer to transfer.
+
+**Reliability of relayed data.** The trailing 16 bits of a host packet are a
+mask of the slots it is meant for; the host repeats a packet with a narrower
+mask for members that missed it.
+
+**Short-window polls.** About once a second the host sends a poll whose
+per-client window is 214 µs instead of 998 µs, with a two-byte body of zeros. A
+real DS answers it with a bare frame (no body), which is all that fits. The
+host acknowledges these rounds like any other and usually moves on if a client
+missed one, but it was once seen resending the same poll some 3,400 times in
+4.4 seconds while one client kept failing, and then removing that client.
+
+**Reply duration.** The duration field of a reply covers the rest of the round:
+`(clients polled after this one + 1) × (window + 10) + 22 − 4 × body bytes`,
+with 16 in place of 22 in short-window rounds. A lone client's idle reply is
+therefore 1022, and the first of two clients' is 2030.
+
+**Known limitation of the ESP32 relay.** The relay's reply reaches the air about
+180 µs after a poll; a DS manages about 16 µs. In ordinary rounds that still
+fits its window. In a short-window round it does not: the reply would run into
+the next client's window and destroy that client's reply. So when another
+polled client follows it, the relay stays silent for that round, and the host
+counts the round against it. When the relay is the last one polled (or alone)
+it sends the bare frame late, which harms nobody. The practical effect: with
+the relay in a lower slot than a DS, the host may occasionally drop it, and the
+server rejoins within about a second. Joining the relay after the DSes gives it
+the highest slot and avoids this.
+
+Not established: the meaning of the byte after the slot (it varies between
+`00`, `69`, `97`, `d0` and others across clients), the four bytes after the
+header in the roster answer, and whether a real DS streams drawing fragments or
+waits for each echo.
 
 ## Executable implementation references
 

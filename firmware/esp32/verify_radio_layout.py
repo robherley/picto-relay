@@ -16,7 +16,8 @@ REQUIRED_IRAM = (
     "lmacIsIdle", "lmacIsLongFrame", "wDev_isNANPktInValidSlot",
     # Our own poll-to-reply path (PICTO_HOT / IRAM_ATTR in main/).
     "bridge_receive", "bridge_tx_complete", "client_receive", "client_tick",
-    "client_tx_complete", "client_profile_reply", "picto_platform_tx",
+    "client_tx_complete", "client_transfer_body",
+    "picto_platform_tx",
     "picto_radio_try_prepared", "picto_radio_submit_prepared", "picto_radio_flush_reply",
 )
 

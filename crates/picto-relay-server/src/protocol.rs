@@ -1,6 +1,7 @@
 //! Versioned request, response, and event shapes for the JSON API.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Current JSON API protocol version.
 pub const PROTOCOL_VERSION: u8 = 1;
@@ -106,10 +107,11 @@ pub const PROFILE_MESSAGE_MAX_UNITS: usize =
 pub const PROFILE_COLOR_MAX: u8 = picto_relay_link::MAX_PROFILE_COLOR;
 
 /// Request body for creating one virtual `PictoChat` session.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, ToSchema)]
 pub struct CreateSessionRequest {
     /// DS profile color index (0–15); omitted requests retain the original color.
     #[serde(default)]
+    #[schema(maximum = 15)]
     pub profile_color: u8,
     /// Personal message advertised during profile exchange (up to 26 UTF-16 units).
     #[serde(default)]
@@ -118,22 +120,24 @@ pub struct CreateSessionRequest {
     pub name: String,
     /// Room number from `0` (A) through `3` (D). Omitted requests use the server default.
     #[serde(default)]
+    #[schema(maximum = 3)]
     pub room: Option<u8>,
 }
 
 /// Response returned after creating a virtual `PictoChat` session.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ToSchema)]
 pub struct CreateSessionResponse {
     /// JSON API version.
     pub version: u8,
     /// Identifier used by subsequent message and event requests.
+    #[schema(value_type = u64)]
     pub session_id: u32,
     /// Room number assigned to the session.
     pub room: u8,
 }
 
 /// Snapshot of the participants known to the selected backend in one room.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
 pub struct RoomSummary {
     /// Whether a current roster or recent beacon has been observed.
     pub observed: bool,
@@ -146,7 +150,7 @@ pub struct RoomSummary {
 }
 
 /// Response returned by the room roster endpoint.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
 pub struct RoomsResponse {
     /// JSON API version.
     pub version: u8,
@@ -155,7 +159,7 @@ pub struct RoomsResponse {
 }
 
 /// Request body for submitting one packed drawing.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, ToSchema)]
 pub struct SendMessageRequest {
     /// Text to render; mutually exclusive with the bitmap fields.
     pub text: Option<String>,
@@ -163,13 +167,15 @@ pub struct SendMessageRequest {
     pub ink: Option<crate::text::Ink>,
     /// Base64-encoded, row-major, one-bit 256x96 bitmap.
     #[serde(default)]
+    #[schema(content_encoding = "base64")]
     pub bitmap: String,
     /// Optional base64 row-major 4bpp bitmap; mutually exclusive with bitmap.
+    #[schema(content_encoding = "base64")]
     pub palette_bitmap: Option<String>,
 }
 
 /// Response returned when a drawing has entered the broker queue.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ToSchema)]
 pub struct AcceptedResponse {
     /// JSON API version.
     pub version: u8,
@@ -178,7 +184,7 @@ pub struct AcceptedResponse {
 }
 
 /// Queued events returned by the polling endpoint.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
 pub struct EventsResponse {
     /// JSON API version.
     pub version: u8,
@@ -187,7 +193,7 @@ pub struct EventsResponse {
 }
 
 /// Description of the active gateway and drawing contract.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ToSchema)]
 pub struct StatusResponse {
     /// Accepted fixed pen indices; rainbow is also available for text.
     pub ink_indices: &'static [u8],
@@ -220,7 +226,7 @@ pub struct StatusResponse {
 }
 
 /// Stable JSON error response.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
 pub struct ErrorResponse {
     /// JSON API version.
     pub version: u8,
@@ -231,7 +237,7 @@ pub struct ErrorResponse {
 }
 
 /// A versioned event returned to an API client.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
 pub struct ServerEnvelope {
     /// Protocol version used to encode this event.
     pub version: u8,
@@ -252,12 +258,13 @@ impl ServerEnvelope {
 }
 
 /// Server-originated session events.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerWireEvent {
     /// Personal profile observed in a physical room.
     Profile {
         /// MAC-derived participant identifier.
+        #[schema(value_type = u64)]
         station_id: u32,
         /// Profile nickname.
         name: String,
@@ -276,6 +283,7 @@ pub enum ServerWireEvent {
     /// Confirms that an API session owns a virtual station.
     SessionReady {
         /// Assigned virtual station identity.
+        #[schema(value_type = u64)]
         client_id: u32,
     },
     /// Replaces the client's participant list.
@@ -302,10 +310,12 @@ pub enum ServerWireEvent {
     /// Delivers a complete drawing.
     Message {
         /// Provisional sending station identity.
+        #[schema(value_type = u64)]
         station_id: u32,
         /// Best available display name.
         name: String,
         /// Sender transfer tag promoted to the API message identifier.
+        #[schema(value_type = u64)]
         message_id: u32,
         /// Base64-encoded packed monochrome bitmap.
         bitmap: String,
@@ -316,11 +326,13 @@ pub enum ServerWireEvent {
     /// Reports acknowledgement of a submitted message.
     Delivered {
         /// Acknowledged transfer identifier.
+        #[schema(value_type = u64)]
         message_id: u32,
     },
     /// Reports that a submitted message exhausted its retries.
     DeliveryTimedOut {
         /// Timed-out transfer identifier.
+        #[schema(value_type = u64)]
         message_id: u32,
     },
     /// Reports a recoverable command or connection problem.
@@ -333,9 +345,10 @@ pub enum ServerWireEvent {
 }
 
 /// One participant in a room roster.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
 pub struct Participant {
     /// Provisional station identity; live backends derive it from the wireless MAC.
+    #[schema(value_type = u64)]
     pub client_id: u32,
     /// API-provided name or nickname parsed from a physical DS profile.
     pub name: String,

@@ -14,7 +14,7 @@ authoritative roster snapshots.
 - `esp32` uses an ESP-WROOM-32 running the USB bridge firmware. One web
   session owns the physical station. The ESP32 handles radio timing; this server
   owns HTTP, WebSockets and drawing encoding/decoding. It joins a DS-hosted room.
-  Room counts are available only after joining.
+  While no session is open, room member counts come from periodic channel scans.
 
 ## Run with the ESP32
 
@@ -22,12 +22,12 @@ Flash [the firmware](../../firmware/esp32/README.md) from the same checkout, the
 
 ```sh
 PICTO_RELAY_BIND=127.0.0.1:3001 cargo run -p picto-relay-server -- \
-  --backend esp32 --serial /dev/cu.usbserial-0001 --channel 1
+  --backend esp32 --serial /dev/cu.usbserial-0001
 ```
 
 On Linux use the appropriate port, for example `/dev/ttyUSB0`, with serial-device
 permissions. The host requires `stty`. Open the UI, choose a nickname and join a
-room on the selected radio channel. The serial worker reconnects automatically;
+room; the firmware finds its Wi-Fi channel. The serial worker reconnects automatically;
 messages interrupted by a disconnect report a delivery timeout and are not replayed.
 The UI reports upload and radio progress plus queue depth. A full-height drawing
 is 86 radio fragments, so bursts queue behind earlier messages. See [the transport contract](../../docs/esp32-usb.md).
@@ -49,4 +49,7 @@ in [json-api.md](../../docs/json-api.md).
 cargo test -p picto-relay-server --locked
 ```
 
-See [json-api.md](../../docs/json-api.md) for endpoints and event shapes.
+See [json-api.md](../../docs/json-api.md) for endpoints and event shapes. The
+OpenAPI schema is served at `/api/v1/openapi.json` and checked in as
+[`docs/openapi.json`](../../docs/openapi.json); regenerate it with `just openapi`
+after changing a handler or an API type.

@@ -32,8 +32,10 @@ serial port is free. The port defaults to `/dev/cu.usbserial-0001`:
 PICTO_SERIAL_PORT=/dev/ttyUSB0 just firmware-upload
 ```
 
-There are no build options to match against the server. The UART speed and
-fragment size are constants in `main/link.h`, mirrored in `crates/picto-relay-link`.
+There are no build options to match against the server. The USB protocol is
+defined in `crates/picto-relay-link`; `main/link_protocol.h` is generated from it
+with `just protocol-header`. The server checks the firmware's protocol version
+when it connects and names the firmware build if they differ.
 
 ## Test
 
@@ -48,9 +50,10 @@ just firmware-test
 
 | File | Role |
 | --- | --- |
-| `main/client.{h,c}` | Protocol state machine: join, profile exchange, poll replies, delivery tracking, beacon discovery. Portable C |
-| `main/link.{h,c}` | USB framing and packed-body decoding. Portable C |
-| `main/bridge.{h,c}` | USB command handling and status reports; serializes access to the client between tasks. Portable C |
+| `main/client.{h,c}` | Protocol state machine: join, profile exchange, drawing fragmentation, poll replies, delivery tracking. Portable C |
+| `main/link.{h,c}` | USB framing. Portable C |
+| `main/link_protocol.h` | Protocol constants, generated from the Rust link crate. Do not edit |
+| `main/bridge.{h,c}` | USB commands, events and channel search; serializes access to the client between tasks. Portable C |
 | `main/platform.c` | ESP-IDF setup, Wi-Fi callbacks, UART |
 | `main/radio_compat.c` | Hooks that let the stock Wi-Fi driver send our frames and reply fast enough |
 | `main/radio_prepared.c` | Stages the next drawing reply before its poll arrives |
@@ -61,6 +64,17 @@ just firmware-test
 
 `sdkconfig.defaults` holds the reproducible ESP-IDF settings; `sdkconfig` and
 `build/` are generated.
+
+## Capturing radio traffic
+
+The firmware can report every PictoChat frame it hears or sends. Run the server
+with a capture file and open the result in Wireshark:
+
+```sh
+just server-capture            # Writes capture.pcap in the repository root
+```
+
+See [Capturing radio traffic](../../docs/esp32-usb.md#capturing-radio-traffic).
 
 ## Timing diagnostics
 

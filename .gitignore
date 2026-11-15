@@ -11,3 +11,9 @@ __pycache__/
 # Extracted contents of captures/captures.tar.gz
 /captures/pi/
 /captures/esp32/
+
+.DS_Store
+
+# Captures written by `just server-capture`
+/*.pcap
+/*.log

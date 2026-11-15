@@ -1,57 +1,46 @@
-//! Keeps this crate and the firmware's C implementation (`firmware/esp32/main/link.c`)
-//! on the same wire format. Both sides are tested against one fixture file: this
-//! test proves the Rust encoder produces it; `firmware/esp32/test/test.c` proves the
-//! C decoder, unpacker and encoder agree with it.
+//! Keeps this crate and the C firmware on the same protocol.
 //!
-//! After an intentional protocol change, regenerate with
-//! `PICTO_WRITE_FIXTURES=1 cargo test -p picto-relay-link --test firmware_fixture`.
-use picto_relay_link::{
-    BODIES, HELLO, MAX_BODY, MAX_ENCODED, MAX_RECORD, Packet, RESPONSE, encode, pack_body,
-};
+//! - `link_protocol.h` must equal the header generated from this crate's constants.
+//! - `link.bin` is produced by the Rust encoder; `firmware/esp32/test/test.c` checks
+//!   that the C decoder reads it and the C encoder reproduces it.
+//!
+//! After an intentional protocol change run `just protocol-header`, which sets
+//! `PICTO_WRITE_FIXTURES=1` to rewrite both files.
+use picto_relay_link::{C_HEADER_NAME, DRAW, HELLO, PROTOCOL_VERSION, RESPONSE, c_header, encode};
+use std::path::PathBuf;
 
-const PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../firmware/esp32/test/fixtures/link.bin"
-);
-
-/// The same three bodies are rebuilt by the C test: all zeros (compresses to one
-/// run), a counting pattern (incompressible, needs the extended raw record) and a
-/// short body containing both framing escape bytes.
-fn bodies() -> [Vec<u8>; 3] {
-    [
-        vec![0; MAX_BODY],
-        (0..MAX_BODY).map(|i| i as u8 + 1).collect(),
-        (0..24)
-            .map(|i| if i % 2 == 0 { 0x7e } else { 0x7d })
-            .collect(),
-    ]
+fn firmware(path: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../firmware/esp32")
+        .join(path)
 }
 
-fn fixture() -> Vec<u8> {
-    let mut payload = 7u32.to_le_bytes().to_vec();
-    payload.push(0);
-    for body in bodies() {
-        let mut record = [0; MAX_RECORD];
-        let n = pack_body(&body, &mut record).unwrap();
-        payload.extend_from_slice(&record[..n]);
+fn check(path: PathBuf, expected: &[u8]) {
+    if std::env::var_os("PICTO_WRITE_FIXTURES").is_some() {
+        std::fs::write(&path, expected).unwrap();
     }
-    let mut bytes = Vec::new();
-    for packet in [
-        Packet::new(HELLO, 1, &[]).unwrap(),
-        Packet::new(BODIES, 0x7e7d_1234, &payload).unwrap(),
-        Packet::new(RESPONSE, 2, &[0, 1, 2, 3, 4, 5, 6]).unwrap(),
-    ] {
-        let mut wire = [0; MAX_ENCODED];
-        let n = encode(&packet, &mut wire);
-        bytes.extend_from_slice(&wire[..n]);
-    }
-    bytes
+    assert!(
+        std::fs::read(&path).unwrap() == expected,
+        "{} is out of date; run `just protocol-header`",
+        path.display()
+    );
+}
+
+/// The C test rebuilds this payload: every byte value, so both escape bytes occur.
+fn every_byte() -> Vec<u8> {
+    (0..=u8::MAX).collect()
+}
+
+#[test]
+fn c_header_is_generated_from_this_crate() {
+    check(firmware("main").join(C_HEADER_NAME), c_header().as_bytes());
 }
 
 #[test]
 fn rust_encoder_matches_the_fixture_shared_with_the_c_firmware() {
-    if std::env::var_os("PICTO_WRITE_FIXTURES").is_some() {
-        std::fs::write(PATH, fixture()).unwrap();
-    }
-    assert_eq!(std::fs::read(PATH).unwrap(), fixture());
+    let mut wire = Vec::new();
+    wire.extend(encode(HELLO, 1, &[PROTOCOL_VERSION]).unwrap());
+    wire.extend(encode(DRAW, 0x7e7d_1234, &every_byte()).unwrap());
+    wire.extend(encode(RESPONSE, 2, &[]).unwrap());
+    check(firmware("test/fixtures/link.bin"), &wire);
 }

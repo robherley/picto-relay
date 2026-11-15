@@ -13,7 +13,7 @@ use crate::protocol::{
     ServerWireEvent,
 };
 
-pub use crate::worker::{DEFAULT_SERIAL_PORT, DEFAULT_WIFI_CHANNEL};
+pub use crate::worker::DEFAULT_SERIAL_PORT;
 
 // --- Queue depths --------------------------------------------------------------
 
@@ -106,15 +106,17 @@ impl BrokerHandle {
         Self { commands, rooms }
     }
 
-    /// Starts a single-station ESP32 USB backend.
+    /// Starts a single-station ESP32 USB backend. With `capture`, every radio
+    /// frame the ESP32 hears or sends during a session is appended to that
+    /// pcap file.
     #[must_use]
-    pub fn spawn_esp32(port: String, channel: u8) -> Self {
+    pub fn spawn_esp32(port: String, capture: Option<std::path::PathBuf>) -> Self {
         let (commands, receiver) = mpsc::channel(COMMAND_CAPACITY);
         let (room_updates, rooms) = watch::channel(empty_room_summaries());
         let broker = Esp32Broker::new(
             Esp32Config {
                 port,
-                channel,
+                capture,
                 ..Esp32Config::default()
             },
             receiver,
@@ -497,7 +499,7 @@ impl Esp32Broker {
                 _ = discovery_tick.tick(), if !self.hardware_running && self.client.is_none() => {
                     let config = self.config.clone();
                     // Await completion before accepting a join: serial ownership never overlaps.
-                    let result = tokio::task::spawn_blocking(move || crate::esp32::discover(&config.port, config.channel)).await;
+                    let result = tokio::task::spawn_blocking(move || crate::esp32::discover(&config.port)).await;
                     self.discovered = match result {
                         Ok(Ok(counts)) => counts,
                         error => { debug!(?error, "passive discovery unavailable"); NO_ROOMS_OBSERVED }
@@ -596,7 +598,7 @@ impl Esp32Broker {
                 };
                 let result = crate::esp32::run(
                     &config.port,
-                    config.channel,
+                    config.capture.as_deref(),
                     room,
                     &hardware_name,
                     &crate::worker::ProfileOptions {

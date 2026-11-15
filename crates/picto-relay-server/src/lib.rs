@@ -6,6 +6,7 @@ pub mod protocol;
 mod esp32;
 
 mod bitmap;
+mod capture;
 mod worker;
 
 pub mod text;

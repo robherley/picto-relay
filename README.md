@@ -36,10 +36,10 @@ PICTO_SERIAL_PORT=/dev/ttyUSB0 just firmware-upload
 PICTO_SERIAL_PORT=/dev/ttyUSB0 PICTO_RELAY_BIND=127.0.0.1:3002 just server
 ```
 
-`PICTO_CHANNEL` selects the Wi-Fi channel searched first (default `1`) and
-`PICTO_FLASH_BAUD` the flashing speed (default `460800`). The runtime link has no
-settings: firmware and server share one fixed [USB protocol](docs/esp32-usb.md),
-so flash the firmware from the same checkout as the server you run.
+`PICTO_FLASH_BAUD` sets the flashing speed (default `460800`). The runtime link has
+no settings: the firmware finds the room's Wi-Fi channel itself, and firmware and
+server share one [USB protocol](docs/esp32-usb.md). Flash the firmware from the same
+checkout as the server you run; a mismatch is reported when the server connects.
 
 Open http://localhost:3001/, enter a nickname, and join the room open on the DS.
 Only one API session can own the ESP32. For hardware-free UI/API development,
@@ -49,10 +49,10 @@ Only one API session can own the ESP32. For hardware-free UI/API development,
 
 - [Server](crates/picto-relay-server/README.md): browser UI, JSON API, sessions, and USB worker.
 - [Codec](crates/picto-relay-codec/README.md): captured Nintendo packet and drawing formats.
-- [USB link](crates/picto-relay-link/README.md): host side of the USB framing and body packing.
+- [USB link](crates/picto-relay-link/README.md): the USB protocol definition and host-side framing.
 - [Firmware](firmware/esp32/README.md): C protocol state machine and ESP-IDF radio hooks.
 
-See the [JSON API](docs/json-api.md), [protocol reference](docs/pictochat-protocol.md),
+See the [JSON API](docs/json-api.md) and its [OpenAPI schema](docs/openapi.json), [protocol reference](docs/pictochat-protocol.md),
 [packet shapes](docs/packet-shapes.md), and [capture evidence](docs/protocol-evidence.md).
 Captures and hardware evidence are bundled in one [archive](captures/README.md).
 Earlier investigations are retained under [docs/history](docs/history/README.md);
