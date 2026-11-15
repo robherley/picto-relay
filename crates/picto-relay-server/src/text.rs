@@ -77,7 +77,7 @@ const COMPACT_TEXT: TextLayout = TextLayout {
 };
 
 /// Fixed DS drawing ink index or the string `rainbow`.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum Ink {
     /// One of the supported fixed pen colors.

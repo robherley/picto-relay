@@ -1,66 +1,78 @@
 #include "link.h"
 #include <string.h>
 
+/* Reflected polynomial of the IEEE 802.3 CRC32. */
+#define CRC32_POLYNOMIAL 0xedb88320u
+
 uint32_t link_crc32(const uint8_t *bytes, size_t len) {
-    uint32_t crc = ~0u;
+    uint32_t crc = UINT32_MAX;
     for (size_t i = 0; i < len; i++) {
         crc ^= bytes[i];
-        for (int bit = 0; bit < 8; bit++) crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1)));
+        for (int bit = 0; bit < 8; bit++) crc = (crc >> 1) ^ (CRC32_POLYNOMIAL & (0u - (crc & 1)));
     }
     return ~crc;
 }
 
-static void put32(uint8_t *p, uint32_t v) {
-    p[0] = (uint8_t)v;
-    p[1] = (uint8_t)(v >> 8);
-    p[2] = (uint8_t)(v >> 16);
-    p[3] = (uint8_t)(v >> 24);
-}
-
-static uint32_t get32(const uint8_t *p) {
-    return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-
-size_t link_encode(uint8_t kind, uint32_t id, const uint8_t *data, size_t len,
-                   uint8_t out[LINK_MAX_ENCODED]) {
-    if (len > LINK_MAX_PAYLOAD) return 0;
-    uint8_t raw[LINK_MAX_RAW];
-    raw[0] = LINK_VERSION;
-    raw[1] = kind;
-    put32(raw + 2, id);
-    raw[6] = (uint8_t)len;
-    raw[7] = (uint8_t)(len >> 8);
-    if (len) memcpy(raw + 8, data, len);
-    put32(raw + 8 + len, link_crc32(raw, 8 + len));
-    size_t n = 0;
-    out[n++] = 0x7e;
-    for (size_t i = 0; i < len + 12; i++) {
-        if (raw[i] == 0x7e || raw[i] == 0x7d) {
-            out[n++] = 0x7d;
-            out[n++] = raw[i] ^ 0x20;
-        } else {
-            out[n++] = raw[i];
-        }
+/* Appends one byte to the wire form, escaping it if needed. */
+static bool put(uint8_t byte, uint8_t *out, size_t capacity, size_t *n) {
+    bool escape = byte == LINK_DELIMITER || byte == LINK_ESCAPE;
+    if (*n + (escape ? 2 : 1) > capacity) return false;
+    if (escape) {
+        out[(*n)++] = LINK_ESCAPE;
+        byte ^= LINK_ESCAPE_XOR;
     }
-    out[n++] = 0x7e;
+    out[(*n)++] = byte;
+    return true;
+}
+
+size_t link_encode(uint8_t kind, uint32_t id, const uint8_t *data, size_t len, uint8_t *out,
+                   size_t capacity) {
+    if (len > LINK_MAX_COMMAND_PAYLOAD || capacity < 2) return 0;
+    uint8_t header[LINK_PAYLOAD_OFFSET], trailer[LINK_CRC_LEN];
+    header[LINK_KIND_OFFSET] = kind;
+    link_put32(header + LINK_ID_OFFSET, id);
+    link_put16(header + LINK_LENGTH_OFFSET, (uint16_t)len);
+
+    /* CRC over header then payload, without assembling them in one buffer. */
+    uint32_t crc = UINT32_MAX;
+    const uint8_t *parts[2] = {header, data};
+    const size_t lengths[2] = {sizeof(header), len};
+    for (int part = 0; part < 2; part++)
+        for (size_t i = 0; i < lengths[part]; i++) {
+            crc ^= parts[part][i];
+            for (int bit = 0; bit < 8; bit++)
+                crc = (crc >> 1) ^ (CRC32_POLYNOMIAL & (0u - (crc & 1)));
+        }
+    link_put32(trailer, ~crc);
+
+    size_t n = 0;
+    out[n++] = LINK_DELIMITER;
+    for (size_t i = 0; i < sizeof(header); i++)
+        if (!put(header[i], out, capacity, &n)) return 0;
+    for (size_t i = 0; i < len; i++)
+        if (!put(data[i], out, capacity, &n)) return 0;
+    for (size_t i = 0; i < sizeof(trailer); i++)
+        if (!put(trailer[i], out, capacity, &n)) return 0;
+    if (n >= capacity) return 0;
+    out[n++] = LINK_DELIMITER;
     return n;
 }
 
 static bool finish(const link_decoder_t *d, link_packet_t *out) {
-    if (d->len < 12 || d->raw[0] != LINK_VERSION) return false;
-    size_t size = d->raw[6] | (size_t)d->raw[7] << 8;
-    if (size > LINK_MAX_PAYLOAD || d->len != size + 12) return false;
-    if (link_crc32(d->raw, d->len - 4) != get32(d->raw + d->len - 4)) return false;
-    out->kind = d->raw[1];
-    out->id = get32(d->raw + 2);
+    if (d->len < LINK_OVERHEAD) return false;
+    size_t size = link_get16(d->raw + LINK_LENGTH_OFFSET);
+    size_t payload_end = LINK_PAYLOAD_OFFSET + size;
+    if (d->len != payload_end + LINK_CRC_LEN) return false;
+    if (link_crc32(d->raw, payload_end) != link_get32(d->raw + payload_end)) return false;
+    out->kind = d->raw[LINK_KIND_OFFSET];
+    out->id = link_get32(d->raw + LINK_ID_OFFSET);
     out->len = size;
-    memset(out->payload, 0, sizeof(out->payload));
-    memcpy(out->payload, d->raw + 8, size);
+    out->payload = d->raw + LINK_PAYLOAD_OFFSET;
     return true;
 }
 
 bool link_decode(link_decoder_t *d, uint8_t byte, link_packet_t *out) {
-    if (byte == 0x7e) {
+    if (byte == LINK_DELIMITER) {
         bool complete = d->active && !d->escape && finish(d, out);
         d->len = 0;
         d->escape = false;
@@ -70,8 +82,8 @@ bool link_decode(link_decoder_t *d, uint8_t byte, link_packet_t *out) {
     if (!d->active) return false;
     if (d->escape) {
         d->escape = false;
-        byte ^= 0x20;
-    } else if (byte == 0x7d) {
+        byte ^= LINK_ESCAPE_XOR;
+    } else if (byte == LINK_ESCAPE) {
         d->escape = true;
         return false;
     }
@@ -81,45 +93,4 @@ bool link_decode(link_decoder_t *d, uint8_t byte, link_packet_t *out) {
     }
     d->raw[d->len++] = byte;
     return false;
-}
-
-/* A record is a tag byte followed by data. Tag 1..127: that many raw bytes.
- * Tag with the high bit set: that many zero-run-encoded bytes, where a nonzero
- * byte is literal and `0, N` expands to N zeros. Tag 0: extended raw record
- * `0, length, body` for bodies of 128 bytes or more. */
-size_t link_record_len(const uint8_t *records, size_t len) {
-    if (len < 1) return 0;
-    size_t n;
-    if (records[0] == 0) {
-        if (len < 2 || records[1] < 128 || records[1] > LINK_MAX_BODY) return 0;
-        n = (size_t)records[1] + 2;
-    } else {
-        n = (size_t)(records[0] & 0x7f) + 1;
-    }
-    return len >= n ? n : 0;
-}
-
-size_t link_unpack_body(const uint8_t *record, size_t len, uint8_t out[LINK_MAX_BODY]) {
-    if (len == 0 || link_record_len(record, len) != len) return 0;
-    uint8_t tag = record[0];
-    const uint8_t *bytes = record + (tag == 0 ? 2 : 1);
-    size_t count = len - (tag == 0 ? 2 : 1);
-    if (!(tag & 0x80)) {
-        if (count < 16 || count > LINK_MAX_BODY) return 0;
-        memcpy(out, bytes, count);
-        return count;
-    }
-    size_t n = 0;
-    for (size_t i = 0; i < count;) {
-        uint8_t value = bytes[i++];
-        size_t run = 1;
-        if (value == 0) {
-            if (i >= count) return 0;
-            run = bytes[i++];
-        }
-        if (run == 0 || n + run > LINK_MAX_BODY) return 0;
-        memset(out + n, value, run);
-        n += run;
-    }
-    return n >= 16 ? n : 0;
 }

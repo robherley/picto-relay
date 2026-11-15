@@ -65,13 +65,9 @@ async fn hardware_drawing_delivery() -> Result<()> {
     let port = std::env::var("PICTO_SERIAL_PORT")
         .context("set PICTO_SERIAL_PORT explicitly (or use just benchmark)")?;
     let room = setting("PICTO_BENCH_ROOM", 0u8)?;
-    let channel = setting("PICTO_CHANNEL", 1u8)?;
     let trials = setting("PICTO_BENCH_TRIALS", 3u32)?;
     let pattern = std::env::var("PICTO_BENCH_PATTERN").unwrap_or_else(|_| "cross".into());
-    ensure!(
-        room < 4 && (1..=14).contains(&channel) && trials > 0,
-        "invalid room, channel, or trial count"
-    );
+    ensure!(room < 4 && trials > 0, "invalid room or trial count");
     ensure!(
         matches!(pattern.as_str(), "cross" | "dense"),
         "pattern must be cross or dense"
@@ -83,7 +79,7 @@ async fn hardware_drawing_delivery() -> Result<()> {
         )
         .with_test_writer()
         .try_init();
-    let broker = BrokerHandle::spawn_esp32(port, channel);
+    let broker = BrokerHandle::spawn_esp32(port, None);
     let mut session = broker.register("Benchmark".into(), room).await?;
     let result: Result<()> = async {
         wait_for(&mut session, true).await?;

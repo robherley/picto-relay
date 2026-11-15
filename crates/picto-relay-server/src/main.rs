@@ -1,6 +1,6 @@
 //! Local JSON HTTP entry point for the Picto Relay gateway.
 
-use std::{collections::BTreeMap, env, net::SocketAddr, ops::RangeInclusive, sync::Arc};
+use std::{collections::BTreeMap, env, net::SocketAddr, sync::Arc};
 
 use anyhow::Context as _;
 use axum::{
@@ -16,7 +16,7 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use clap::{Parser, ValueEnum};
 use picto_relay_server::{
-    broker::{BrokerError, BrokerHandle, ClientId, DEFAULT_SERIAL_PORT, DEFAULT_WIFI_CHANNEL},
+    broker::{BrokerError, BrokerHandle, ClientId, DEFAULT_SERIAL_PORT},
     protocol::{
         AcceptedResponse, BITMAP_BYTES, CANVAS_HEIGHT, CANVAS_WIDTH, CreateSessionRequest,
         CreateSessionResponse, DRAWABLE_REGIONS, ErrorResponse, EventsResponse, INK_INDICES,
@@ -30,6 +30,7 @@ use tokio::sync::{Mutex, mpsc};
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
+use utoipa::OpenApi;
 
 // --- HTTP server -----------------------------------------------------------------
 
@@ -48,11 +49,50 @@ const MAX_EVENTS_PER_POLL: usize = 32;
 
 // --- Command-line defaults ---------------------------------------------------------
 
-/// 2.4 GHz Wi-Fi channels accepted by `--channel`.
-const WIFI_CHANNEL_RANGE: RangeInclusive<i64> = 1..=14;
-
 /// Room letter joined when `--room` is omitted.
 const DEFAULT_ROOM_NAME: &str = ROOM_NAMES[0];
+
+// --- OpenAPI ---------------------------------------------------------------------
+
+/// Tag for gateway-wide operations.
+const TAG_GATEWAY: &str = "gateway";
+/// Tag for room listing operations.
+const TAG_ROOMS: &str = "rooms";
+/// Tag for operations on one session.
+const TAG_SESSIONS: &str = "sessions";
+/// Path at which the server publishes its own `OpenAPI` document.
+const OPENAPI_PATH: &str = "/api/v1/openapi.json";
+
+/// The `OpenAPI` description of the JSON API, generated from the handlers and
+/// the types in `protocol.rs`. `docs/openapi.json` is this document, checked in.
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "Picto Relay",
+        description = "Join a Nintendo DS PictoChat room and exchange drawings over HTTP and WebSocket.\n\nA session is one participant in one room. Create it, send drawings or text, and read events by polling or over a WebSocket. Events are `ServerEnvelope` objects whose `type` field selects the variant."
+    ),
+    paths(
+        api_status,
+        api_rooms,
+        websocket_rooms,
+        create_api_session,
+        delete_api_session,
+        send_api_message,
+        poll_api_events,
+        websocket_api_events,
+    ),
+    components(schemas(ServerEnvelope, RoomsResponse)),
+    tags(
+        (name = TAG_GATEWAY, description = "What this gateway is and what it accepts"),
+        (name = TAG_ROOMS, description = "Who is in rooms A through D"),
+        (name = TAG_SESSIONS, description = "Join a room, send messages, receive events"),
+    )
+)]
+struct ApiDoc;
+
+async fn openapi() -> Json<utoipa::openapi::OpenApi> {
+    Json(ApiDoc::openapi())
+}
 
 #[derive(Clone, Debug)]
 struct AppState {
@@ -82,9 +122,10 @@ struct Cli {
     #[arg(long, default_value = DEFAULT_SERIAL_PORT)]
     serial: String,
 
-    /// Preferred 2.4 GHz channel, scanned first when discovering a room.
-    #[arg(long, default_value_t = DEFAULT_WIFI_CHANNEL, value_parser = clap::value_parser!(u8).range(WIFI_CHANNEL_RANGE))]
-    channel: u8,
+    /// Record every radio frame the ESP32 hears or sends to this pcap file
+    /// (appended to if it exists), for inspection in Wireshark.
+    #[arg(long, value_name = "FILE")]
+    capture: Option<std::path::PathBuf>,
 
     /// `PictoChat` room: A, B, C, or D.
     #[arg(long, default_value = DEFAULT_ROOM_NAME, value_parser = parse_room)]
@@ -151,7 +192,7 @@ async fn main() -> anyhow::Result<()> {
     let (broker, backend) = match options.backend {
         Backend::Memory => (BrokerHandle::spawn_memory(), "memory"),
         Backend::Esp32 => (
-            BrokerHandle::spawn_esp32(options.serial, options.channel),
+            BrokerHandle::spawn_esp32(options.serial, options.capture),
             "esp32",
         ),
     };
@@ -182,6 +223,7 @@ fn app(broker: BrokerHandle, backend: &'static str, default_room: u8) -> Router 
         .route("/app.css", get(stylesheet))
         .route("/app.js", get(javascript))
         .route("/health", get(|| async { StatusCode::NO_CONTENT }))
+        .route(OPENAPI_PATH, get(openapi))
         .route("/api/v1/status", get(api_status))
         .route("/api/v1/rooms", get(api_rooms))
         .route("/api/v1/rooms/ws", get(websocket_rooms))
@@ -222,6 +264,17 @@ async fn javascript() -> impl IntoResponse {
     )
 }
 
+/// Describe the gateway
+///
+/// Reports the active radio backend and the drawing contract: bitmap sizes and
+/// encodings, text and profile limits, accepted ink indices and the drawable area.
+#[utoipa::path(
+    get,
+    operation_id = "getStatus",
+    path = "/api/v1/status",
+    tag = TAG_GATEWAY,
+    responses((status = 200, description = "Gateway description", body = StatusResponse))
+)]
 async fn api_status(State(state): State<AppState>) -> Json<StatusResponse> {
     Json(StatusResponse {
         ink_indices: INK_INDICES,
@@ -241,6 +294,20 @@ async fn api_status(State(state): State<AppState>) -> Json<StatusResponse> {
     })
 }
 
+/// List rooms
+///
+/// Member counts and known participants of rooms A through D. With the ESP32
+/// backend and no open session, counts come from periodic channel scans.
+#[utoipa::path(
+    get,
+    operation_id = "listRooms",
+    path = "/api/v1/rooms",
+    tag = TAG_ROOMS,
+    responses(
+        (status = 200, description = "Room snapshots in A-through-D order", body = RoomsResponse),
+        (status = 503, description = "The broker is unavailable or busy", body = ErrorResponse),
+    )
+)]
 async fn api_rooms(State(state): State<AppState>) -> Result<Json<RoomsResponse>, ApiError> {
     Ok(Json(RoomsResponse {
         version: PROTOCOL_VERSION,
@@ -248,6 +315,17 @@ async fn api_rooms(State(state): State<AppState>) -> Result<Json<RoomsResponse>,
     }))
 }
 
+/// Stream room updates (WebSocket)
+///
+/// Upgrades to a WebSocket. The server sends one `RoomsResponse` as a JSON text
+/// frame immediately and another whenever a room changes. Client frames are ignored.
+#[utoipa::path(
+    get,
+    operation_id = "streamRooms",
+    path = "/api/v1/rooms/ws",
+    tag = TAG_ROOMS,
+    responses((status = 101, description = "Switching to WebSocket; text frames are `RoomsResponse` JSON"))
+)]
 async fn websocket_rooms(
     State(state): State<AppState>,
     websocket: WebSocketUpgrade,
@@ -296,6 +374,23 @@ async fn push_room_updates(
     }
 }
 
+/// Stream session events (WebSocket)
+///
+/// Upgrades to a WebSocket. Each event is one `ServerEnvelope` as a JSON text
+/// frame. A session has one event consumer: while a WebSocket is attached,
+/// polling returns 409, and a second WebSocket is refused.
+#[utoipa::path(
+    get,
+    operation_id = "streamSessionEvents",
+    path = "/api/v1/sessions/{session_id}/events/ws",
+    tag = TAG_SESSIONS,
+    params(("session_id" = u64, Path, description = "Identifier returned when the session was created")),
+    responses(
+        (status = 101, description = "Switching to WebSocket; text frames are `ServerEnvelope` JSON"),
+        (status = 404, description = "No such session", body = ErrorResponse),
+        (status = 409, description = "Another WebSocket already consumes this session", body = ErrorResponse),
+    )
+)]
 async fn websocket_api_events(
     State(state): State<AppState>,
     AxumPath(session_id): AxumPath<u32>,
@@ -366,6 +461,23 @@ async fn send_websocket_json<T: Serialize>(socket: &mut WebSocket, value: &T) ->
         .is_ok()
 }
 
+/// Join a room
+///
+/// Creates a session: a virtual `PictoChat` participant with the given name and
+/// profile. With the ESP32 backend this joins the DS-hosted room; follow the
+/// session's events for `backend_state` progress and `session_ready`.
+#[utoipa::path(
+    post,
+    operation_id = "createSession",
+    path = "/api/v1/sessions",
+    tag = TAG_SESSIONS,
+    request_body = CreateSessionRequest,
+    responses(
+        (status = 201, description = "Session created", body = CreateSessionResponse),
+        (status = 422, description = "Invalid name, room, profile message or profile color", body = ErrorResponse),
+        (status = 503, description = "The backend is unavailable or already in use", body = ErrorResponse),
+    )
+)]
 async fn create_api_session(
     State(state): State<AppState>,
     Json(request): Json<CreateSessionRequest>,
@@ -411,6 +523,17 @@ async fn create_api_session(
     ))
 }
 
+/// Leave the room
+///
+/// Ends the session and releases the radio.
+#[utoipa::path(
+    delete,
+    operation_id = "deleteSession",
+    path = "/api/v1/sessions/{session_id}",
+    tag = TAG_SESSIONS,
+    params(("session_id" = u64, Path, description = "Identifier returned when the session was created")),
+    responses((status = 204, description = "Session ended"), (status = 404, description = "No such session", body = ErrorResponse))
+)]
 async fn delete_api_session(
     State(state): State<AppState>,
     AxumPath(session_id): AxumPath<u32>,
@@ -430,6 +553,26 @@ async fn delete_api_session(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Send a drawing or text
+///
+/// Queues one message. Supply exactly one of `text` (rendered by the server,
+/// optionally with `ink`), `bitmap` (1 bit per pixel) or `palette_bitmap`
+/// (4 bits per pixel). Delivery is reported later as a `delivered` or
+/// `delivery_timed_out` event.
+#[utoipa::path(
+    post,
+    operation_id = "sendMessage",
+    path = "/api/v1/sessions/{session_id}/messages",
+    tag = TAG_SESSIONS,
+    params(("session_id" = u64, Path, description = "Identifier returned when the session was created")),
+    request_body = SendMessageRequest,
+    responses(
+        (status = 202, description = "Message queued", body = AcceptedResponse),
+        (status = 404, description = "No such session", body = ErrorResponse),
+        (status = 422, description = "Invalid text, ink or bitmap", body = ErrorResponse),
+        (status = 503, description = "The backend is unavailable or its queue is full", body = ErrorResponse),
+    )
+)]
 async fn send_api_message(
     State(state): State<AppState>,
     AxumPath(session_id): AxumPath<u32>,
@@ -502,6 +645,23 @@ async fn send_api_message(
     ))
 }
 
+/// Poll session events
+///
+/// Returns and removes the events queued since the previous poll, at most 32
+/// per request. Use the WebSocket endpoint instead for push delivery.
+#[utoipa::path(
+    get,
+    operation_id = "pollSessionEvents",
+    path = "/api/v1/sessions/{session_id}/events",
+    tag = TAG_SESSIONS,
+    params(("session_id" = u64, Path, description = "Identifier returned when the session was created")),
+    responses(
+        (status = 200, description = "Queued events, oldest first", body = EventsResponse),
+        (status = 404, description = "No such session", body = ErrorResponse),
+        (status = 409, description = "A WebSocket is consuming this session's events", body = ErrorResponse),
+        (status = 503, description = "The session's event stream is unavailable", body = ErrorResponse),
+    )
+)]
 async fn poll_api_events(
     State(state): State<AppState>,
     AxumPath(session_id): AxumPath<u32>,
@@ -606,7 +766,45 @@ mod tests {
     use serde_json::{Value, json};
     use tower::ServiceExt as _;
 
-    use super::app;
+    use super::{ApiDoc, app};
+    use utoipa::OpenApi as _;
+
+    /// `docs/openapi.json` is the published schema clients generate from. It must
+    /// be exactly what the server serves; regenerate it with `just openapi`.
+    #[test]
+    fn checked_in_openapi_document_is_current() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/openapi.json");
+        let expected = ApiDoc::openapi().to_pretty_json().unwrap() + "\n";
+        if std::env::var_os("PICTO_WRITE_FIXTURES").is_some() {
+            std::fs::write(&path, &expected).unwrap();
+        }
+        assert!(
+            std::fs::read_to_string(&path).unwrap() == expected,
+            "docs/openapi.json is out of date; run `just openapi`"
+        );
+    }
+
+    #[test]
+    fn openapi_document_covers_every_api_route() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let paths = document["paths"].as_object().unwrap();
+        for path in [
+            "/api/v1/status",
+            "/api/v1/rooms",
+            "/api/v1/rooms/ws",
+            "/api/v1/sessions",
+            "/api/v1/sessions/{session_id}",
+            "/api/v1/sessions/{session_id}/messages",
+            "/api/v1/sessions/{session_id}/events",
+            "/api/v1/sessions/{session_id}/events/ws",
+        ] {
+            assert!(paths.contains_key(path), "{path} is not documented");
+        }
+        assert_eq!(paths.len(), 8);
+        // Every event variant is distinguishable by its `type` tag.
+        let events = &document["components"]["schemas"]["ServerWireEvent"]["oneOf"];
+        assert_eq!(events.as_array().unwrap().len(), 10);
+    }
 
     fn test_app() -> Router {
         app(BrokerHandle::spawn_memory(), "memory", 0)
@@ -631,6 +829,18 @@ mod tests {
             .await
             .expect("response body should be readable");
         serde_json::from_slice(&bytes).expect("response should contain JSON")
+    }
+
+    #[tokio::test]
+    async fn server_publishes_its_openapi_document() {
+        let response = send_json(&test_app(), Method::GET, super::OPENAPI_PATH, json!({})).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let served = response_json(response).await;
+        assert_eq!(served, serde_json::to_value(ApiDoc::openapi()).unwrap());
+        assert_eq!(
+            served["paths"]["/api/v1/sessions"]["post"]["operationId"],
+            "createSession"
+        );
     }
 
     #[tokio::test]

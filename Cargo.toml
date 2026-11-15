@@ -27,6 +27,7 @@ tower-http = { version = "0.6", features = ["trace"] }
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+utoipa = "6.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

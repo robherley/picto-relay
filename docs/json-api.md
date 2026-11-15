@@ -13,6 +13,37 @@ are optional. REST polling supports the complete session lifecycle.
 | Leave | `DELETE /sessions/{id}` |
 | Optional live room snapshots | WebSocket `/rooms/ws` |
 | Optional session event stream | WebSocket `/sessions/{id}/events/ws` |
+| Machine-readable description of all of the above | `GET /openapi.json` |
+
+## OpenAPI schema
+
+The API is described by an OpenAPI 3.1 document, generated from the server's
+handlers and types so it cannot drift from the implementation:
+
+- [`docs/openapi.json`](openapi.json) is checked in, for generating clients
+  without running anything.
+- A running server serves the same document at `/api/v1/openapi.json`.
+
+Point any OpenAPI generator at either, for example:
+
+```sh
+npx openapi-typescript docs/openapi.json -o picto-relay.d.ts
+openapi-generator-cli generate -i docs/openapi.json -g python -o client/
+```
+
+Notes for generated clients:
+
+- Session events are a `ServerEnvelope`: a `version` plus one event, selected
+  by its `type` field (`session_ready`, `message`, `delivered`, ...). The same
+  shape arrives from polling and from the WebSocket.
+- OpenAPI cannot describe WebSocket messages. The two `/ws` endpoints are
+  listed with a `101` response; their text frames are `RoomsResponse` and
+  `ServerEnvelope` JSON, both defined in the schema.
+- Identifiers are unsigned 32-bit values and are declared as 64-bit integers so
+  typed clients do not overflow.
+
+After changing a handler or a type in `protocol.rs`, run `just openapi` to
+rewrite the checked-in document; `cargo test` fails while it is stale.
 
 ## Run
 
@@ -27,7 +58,7 @@ For the connected ESP32:
 
 ```sh
 cargo run -p picto-relay-server -- \
-  --backend esp32 --serial /dev/cu.usbserial-0001 --channel 1
+  --backend esp32 --serial /dev/cu.usbserial-0001
 ```
 
 The physical backend supports one API session at a time, joining a room hosted
@@ -64,9 +95,8 @@ The response contains `version: 1` and four `rooms` (0=A, 1=B, 2=C, 3=D):
 {"observed":true,"room":0,"participant_count":2,"participants":[{"client_id":4083630471,"name":"Rob"},{"client_id":3209822209,"name":"Relay"}]}
 ```
 
-While idle, the server scans Wi-Fi channels 1–13 every five seconds, listening
-for 250 ms on each channel. `--channel` is the preferred channel and is scanned
-first (including channel 14 if explicitly selected). Names require joining;
+While idle, the server asks the firmware to scan Wi-Fi channels 1–13 about every
+five seconds, listening for 250 ms on each channel. Names require joining;
 a positive count with an empty `participants` array is valid. `observed: false`
 means unknown, not an empty room. Passive discovery pauses during a session,
 whose roster then supplies its count and names. Joining scans for the selected

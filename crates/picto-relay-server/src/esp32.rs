@@ -1,18 +1,20 @@
 //! Blocking serial worker isolated from the async HTTP broker.
 use crate::bitmap::{api_bitmap_to_native, native_message_to_api_bitmap};
 use crate::broker::station_id;
+use crate::capture::Capture;
 use crate::worker::{LiveCommand, LiveEvent, LiveParticipant};
 use anyhow::{Context, Result, bail};
 use picto_relay_codec::{
     MAC_ADDRESS_LEN, MacAddress, MessageReassembler, NintendoFlow, PictoChatEnvelope,
     PictoChatFragment, PictoChatMessage, PictoChatProfile, PictoChatRoster, ReassemblyKey,
-    encode_fragment_envelope, encode_message, fragment_payload_starting_at,
+    encode_message,
 };
 use picto_relay_link as link;
 use std::{
     collections::{BTreeMap, VecDeque},
     fs::{File, OpenOptions},
     io::{Read, Write},
+    path::Path,
     process::Command,
     sync::mpsc::{Receiver, TryRecvError},
     time::{Duration, Instant},
@@ -30,23 +32,17 @@ const READ_CHUNK_BYTES: usize = 512;
 const MAX_PENDING_EVENTS: usize = 256;
 /// Request IDs start here and increase for the life of a connection.
 const FIRST_REQUEST_ID: u32 = 1;
-/// How long a command may go unanswered before the session is reset.
+/// How long a command may go unanswered, or stay busy, before the session is reset.
 const REQUEST_DEADLINE: Duration = Duration::from_secs(3);
-/// How often an unanswered command is resent.
+/// How often an unanswered or busy command is resent.
 const REQUEST_RETRY_INTERVAL: Duration = Duration::from_millis(150);
 
 // ---- Room discovery --------------------------------------------------------
 
 /// Member counts for rooms A through D, [`link::NO_BEACON`] when unknown.
 type RoomCounts = [u8; link::ROOM_COUNT];
-/// Time spent listening for beacons on each channel.
-const CHANNEL_DWELL: Duration = Duration::from_millis(250);
-/// Channels a DS host normally picks, scanned before the rest.
-const USUAL_HOST_CHANNELS: [u8; 3] = [1, 7, 13];
-/// Lowest 2.4 GHz channel scanned.
-const FIRST_CHANNEL: u8 = 1;
-/// Highest 2.4 GHz channel scanned.
-const LAST_CHANNEL: u8 = 13;
+/// Longest a full channel sweep by the firmware may take.
+const SCAN_TIMEOUT: Duration = Duration::from_secs(6);
 
 // ---- Session ---------------------------------------------------------------
 
@@ -54,13 +50,15 @@ const LAST_CHANNEL: u8 = 13;
 const RECONNECT_DELAY: Duration = Duration::from_secs(1);
 /// How often the firmware is told the host is still alive.
 const PING_INTERVAL: Duration = Duration::from_secs(1);
-/// Longest the DS profile exchange may take before rejoining.
-const PROFILE_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Longest finding the room and exchanging profiles may take before rejoining.
+const JOIN_TIMEOUT: Duration = Duration::from_secs(30);
 /// Longest gap between firmware status reports before reconnecting.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 /// Longest a drawing may take from upload to DS delivery.
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(40);
-/// Drawings that may wait behind the one being sent.
+/// Drawings the firmware holds at once: one being sent and one waiting.
+const MAX_UPLOADED_DRAWINGS: usize = 2;
+/// Drawings that may wait on the host behind those.
 const MAX_QUEUED_DRAWINGS: usize = 4;
 /// Recently completed incoming drawings remembered to drop host repeats.
 const MAX_COMPLETED_DRAWINGS: usize = 128;
@@ -68,8 +66,6 @@ const MAX_COMPLETED_DRAWINGS: usize = 128;
 const HOST_FRAGMENT_SIZES: [usize; 3] = [80, 120, 160];
 /// Colors in the `PictoChat` palette.
 const PALETTE_COLORS: usize = 16;
-/// Upload progress is reported in this many steps.
-const UPLOAD_PROGRESS_STEPS: usize = 10;
 /// Scale of a percentage.
 const PERCENT: usize = 100;
 
@@ -79,48 +75,16 @@ const PERCENT: usize = 100;
 const PACKET_ID_MASK: u16 = 0x7fff;
 /// Packet ID of the host's participant roster.
 const ROSTER_PACKET_ID: u16 = 0x1c34;
-/// Packet ID of a client transfer announcement or completion (`d0a`).
-const CLIENT_CONTROL_PACKET_ID: u16 = 0x8d0a;
-/// Declared length of a client `d0a` envelope: its 18-byte payload plus two.
-const CONTROL_DECLARED_LENGTH: u16 = 20;
-/// Envelope sequence of a transfer announcement.
-const ANNOUNCE_PACKET_SEQUENCE: u16 = 0;
-/// Envelope sequence of a transfer completion.
-const COMPLETION_PACKET_SEQUENCE: u16 = 3;
-/// Byte after the slot in an announcement; observed constant.
-const ANNOUNCE_MARKER: u8 = 0;
-/// Byte after the slot in a completion; observed constant.
-const COMPLETION_MARKER: u8 = 4;
-/// Two bytes after the marker in both controls; observed constant.
-const CONTROL_FILLER: u16 = 0xffff;
-/// Command counter of a session's first announcement.
-const FIRST_COMMAND_COUNTER: u32 = 12;
-/// Command counter increase between drawings, as captured from a real DS.
-const COMMAND_COUNTER_STEP: u32 = 3;
-/// Per-transfer nonce of the first drawing. The DS ignores a repeated value,
-/// so each drawing must differ; how a real DS generates it is unknown.
-const NONCE_SEED: u32 = 0x75f0_3cca;
-/// Multiplied by the drawing number and combined with the seed by XOR to vary the nonce.
-const NONCE_MULTIPLIER: u32 = 0x9e37_79b9;
-/// Transfer counter of a session's first announcement. A completion uses its
-/// announcement's value plus one.
-const FIRST_TRANSFER_COUNTER: u16 = 5;
-/// Transfer counter increase between drawings.
-const TRANSFER_COUNTER_STEP: u16 = 2;
-/// Number of u32 fields in a `d0a` control payload.
-const CONTROL_FIELDS: usize = 3;
-/// The u32 fields of a completion, replayed from a capture; meaning unknown.
-const COMPLETION_OPAQUE_FIELDS: [u32; CONTROL_FIELDS] = [0x0232_93dd, 0xffff_ff01, 0x0236_c8bb];
-/// Opaque transfer tag carried by every fragment; a real DS client sends zeros.
-const TRANSFER_TAG: [u8; 2] = [0, 0];
-/// Frame number of a session's first drawing fragment, after the profile exchange.
-const FIRST_FRAGMENT_NUMBER: u16 = 3;
+/// Length of the opaque transfer tag that identifies a host rebroadcast.
+const TRANSFER_TAG_LEN: usize = 2;
 
 struct Port {
     file: File,
     decoder: link::Decoder,
     next_id: u32,
     events: VecDeque<link::Packet>,
+    /// Where captured radio frames go, when the firmware is asked for them.
+    capture: Option<Capture>,
 }
 impl Port {
     fn open(path: &str) -> Result<Self> {
@@ -152,6 +116,7 @@ impl Port {
             decoder: link::Decoder::new(),
             next_id: FIRST_REQUEST_ID,
             events: VecDeque::new(),
+            capture: None,
         })
     }
     fn read(&mut self) -> Result<()> {
@@ -159,6 +124,12 @@ impl Port {
         let n = self.file.read(&mut bytes)?;
         for &b in &bytes[..n] {
             if let Some(p) = self.decoder.push(b) {
+                // Captured frames are numerous: write them out as they arrive
+                // instead of queueing them behind the session's events.
+                if p.kind == link::FRAME {
+                    self.record(&p)?;
+                    continue;
+                }
                 if self.events.len() >= MAX_PENDING_EVENTS {
                     bail!("USB event backlog exceeded limit");
                 }
@@ -167,87 +138,144 @@ impl Port {
         }
         Ok(())
     }
-    fn request(&mut self, kind: u8, data: &[u8]) -> Result<Vec<u8>> {
+    fn record(&mut self, frame: &link::Packet) -> Result<()> {
+        let (Some(capture), Some(data)) = (
+            &mut self.capture,
+            frame.payload.get(link::FRAME_DATA_OFFSET..),
+        ) else {
+            return Ok(());
+        };
+        let time = &frame.payload[link::FRAME_TIME_OFFSET..link::FRAME_FLAGS_OFFSET];
+        let length = &frame.payload[link::FRAME_LENGTH_OFFSET..link::FRAME_DATA_OFFSET];
+        capture.write(
+            u32::from_le_bytes(time.try_into()?),
+            u16::from_le_bytes(length.try_into()?),
+            data,
+        )
+    }
+    /// Sends a command until the firmware gives a final answer. Returns its
+    /// status and response data; a busy device or a lost packet is retried.
+    fn exchange(&mut self, kind: u8, data: &[u8]) -> Result<(u8, Vec<u8>)> {
         let id = self.next_id;
         tracing::debug!(kind, id, "USB request");
         self.next_id = self
             .next_id
             .checked_add(1)
             .context("USB command ID exhausted")?;
-        let p = link::Packet::new(kind, id, data).context("USB command too large")?;
-        let mut bytes = [0; link::MAX_ENCODED];
-        let n = link::encode(&p, &mut bytes);
+        let wire = link::encode(kind, id, data).context("USB command too large")?;
         let deadline = Instant::now() + REQUEST_DEADLINE;
         let mut next_send = Instant::now();
         let mut attempts = 0;
         while Instant::now() < deadline {
             if Instant::now() >= next_send {
-                self.file.write_all(&bytes[..n])?;
+                self.file.write_all(&wire)?;
                 attempts += 1;
                 next_send = Instant::now() + REQUEST_RETRY_INTERVAL;
             }
             self.read()?;
-            if let Some(index) = self
+            let Some(index) = self
                 .events
                 .iter()
                 .position(|p| p.kind == link::RESPONSE && p.id == id)
-            {
-                let reply = self.events.remove(index).context("missing USB response")?;
-                if let Some((&link::RESPONSE_OK, data)) = reply.data().split_first() {
-                    tracing::debug!(kind, id, attempts, "USB accepted");
-                    return Ok(data.to_vec());
+            else {
+                continue;
+            };
+            let reply = self.events.remove(index).context("missing USB response")?;
+            match reply.payload.split_first() {
+                Some((&link::STATUS_BUSY, _)) | None => {}
+                Some((&status, data)) => {
+                    tracing::debug!(kind, id, attempts, status, "USB answered");
+                    return Ok((status, data.to_vec()));
                 }
             }
         }
         bail!("ESP32 command {kind} timed out or remained busy")
     }
-}
-
-/// Poll passive discovery only when no session worker owns the serial port.
-pub(crate) fn discover(path: &str, channel: u8) -> Result<RoomCounts> {
-    let mut port = Port::open(path)?;
-    port.request(link::HELLO, &[])?;
-    port.request(link::LEAVE, &[])?;
-    Ok(scan_channels(channel, None, |channel| observe_channel(&mut port, channel))?.0)
-}
-
-fn observe_channel(port: &mut Port, channel: u8) -> Result<RoomCounts> {
-    // Tuning clears firmware observations. Allow multiple beacons before reading.
-    port.request(link::DISCOVER, &[channel])?;
-    std::thread::sleep(CHANNEL_DWELL);
-    port.request(link::DISCOVER, &[channel])?
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("invalid discovery response"))
-}
-
-fn scan_channels(
-    preferred: u8,
-    target: Option<u8>,
-    mut observe: impl FnMut(u8) -> Result<RoomCounts>,
-) -> Result<(RoomCounts, Option<u8>)> {
-    let mut counts = [link::NO_BEACON; link::ROOM_COUNT];
-    let mut channels = vec![preferred];
-    for channel in USUAL_HOST_CHANNELS
-        .into_iter()
-        .chain(FIRST_CHANNEL..=LAST_CHANNEL)
-    {
-        if !channels.contains(&channel) {
-            channels.push(channel);
+    /// Sends a command that is expected to succeed and returns its response data.
+    fn request(&mut self, kind: u8, data: &[u8]) -> Result<Vec<u8>> {
+        match self.exchange(kind, data)? {
+            (link::STATUS_OK, data) => Ok(data),
+            (status, _) => bail!("ESP32 refused command {kind}: {}", status_text(status)),
         }
     }
-    for channel in channels {
-        let observed = observe(channel)?;
-        for (room, &count) in observed.iter().enumerate() {
-            if count != link::NO_BEACON {
-                counts[room] = count;
-                tracing::debug!(room, channel, count, "room beacon found");
+    /// Attaches to the firmware and returns its station address.
+    fn hello(&mut self) -> Result<MacAddress> {
+        let (status, data) = self.exchange(link::HELLO, &[link::PROTOCOL_VERSION])?;
+        let version = data.get(link::HELLO_VERSION_OFFSET).copied();
+        let build = String::from_utf8_lossy(data.get(link::HELLO_BUILD_OFFSET..).unwrap_or(&[]))
+            .into_owned();
+        if status == link::STATUS_VERSION_MISMATCH {
+            bail!(
+                "ESP32 firmware (build {build}) speaks protocol {} but this server speaks {}; \
+                 flash matching firmware with `just firmware-upload`",
+                version.map_or_else(|| "?".into(), |v| v.to_string()),
+                link::PROTOCOL_VERSION
+            );
+        }
+        if status != link::STATUS_OK {
+            bail!("ESP32 refused to attach: {}", status_text(status));
+        }
+        tracing::info!(build, "ESP32 firmware attached");
+        let mac = data
+            .get(link::HELLO_MAC_OFFSET..link::HELLO_MAC_OFFSET + link::MAC_LEN)
+            .context("invalid ESP32 hello")?;
+        Ok(MacAddress(mac.try_into()?))
+    }
+}
+
+fn status_text(status: u8) -> &'static str {
+    match status {
+        link::STATUS_OK => "ok",
+        link::STATUS_BUSY => "busy",
+        link::STATUS_INVALID => "malformed command",
+        link::STATUS_WRONG_STATE => "not possible in the current session state",
+        link::STATUS_VERSION_MISMATCH => "protocol version mismatch",
+        link::STATUS_NOT_ATTACHED => "no HELLO was sent",
+        _ => "unknown status",
+    }
+}
+
+/// Explains a LEFT event to the user.
+fn left_text(payload: &[u8]) -> String {
+    let reason = payload.get(link::LEFT_REASON_OFFSET).copied();
+    let code = payload
+        .get(link::LEFT_CODE_OFFSET..link::LEFT_LEN)
+        .and_then(|code| code.try_into().ok())
+        .map_or(0, u16::from_le_bytes);
+    match reason {
+        Some(link::LEFT_REQUESTED) => "the relay left the room".into(),
+        Some(link::LEFT_NO_HOST) => {
+            "no DS is hosting that room nearby; open the room on a DS first".into()
+        }
+        Some(link::LEFT_JOIN_TIMEOUT) => "the DS did not answer the join request".into(),
+        Some(link::LEFT_REJECTED) => format!("the DS refused the join (status {code})"),
+        Some(link::LEFT_KICKED) => format!("the DS closed the session (reason {code})"),
+        Some(link::LEFT_HOST_LOST) => "the DS stopped responding".into(),
+        Some(link::LEFT_RADIO_STALLED) => "the ESP32 radio stalled".into(),
+        _ => "the session ended for an unknown reason".into(),
+    }
+}
+
+/// Asks the idle firmware to sweep every channel and reports the rooms it saw.
+/// Called only when no session worker owns the serial port.
+pub(crate) fn discover(path: &str) -> Result<RoomCounts> {
+    let mut port = Port::open(path)?;
+    port.hello()?;
+    port.request(link::LEAVE, &[])?;
+    port.request(link::SCAN, &[])?;
+    let deadline = Instant::now() + SCAN_TIMEOUT;
+    while Instant::now() < deadline {
+        port.read()?;
+        while let Some(packet) = port.events.pop_front() {
+            if packet.kind == link::ROOMS {
+                return packet
+                    .payload
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid room scan result"));
             }
         }
-        if target.is_some_and(|room| observed[usize::from(room)] != link::NO_BEACON) {
-            return Ok((counts, Some(channel)));
-        }
     }
-    Ok((counts, None))
+    bail!("ESP32 room scan timed out")
 }
 
 /// Runs one persistent API session, reconnecting the device until shutdown.
@@ -255,7 +283,7 @@ fn scan_channels(
 /// Returns on a command-channel failure during shutdown.
 pub fn run(
     port: &str,
-    channel: u8,
+    capture: Option<&Path>,
     room: u8,
     name: &str,
     profile: &crate::worker::ProfileOptions,
@@ -267,7 +295,12 @@ pub fn run(
             state: "connecting",
             detail: format!("opening ESP32 on {port}"),
         });
-        match connected(port, channel, room, name, profile, commands, emit) {
+        let mut joined = false;
+        let device = Device {
+            path: port,
+            capture,
+        };
+        match connected(&device, room, name, profile, commands, emit, &mut joined) {
             Ok(()) => {
                 emit(LiveEvent::Left);
                 return Ok(());
@@ -278,6 +311,16 @@ pub fn run(
                     state: "reconnecting",
                     detail: error.to_string(),
                 });
+                // A session that was up and dropped is usually back within a
+                // second with the same people in the room, so the member list
+                // is kept and corrected by the next roster. If the attempt
+                // never got in, the room is gone: nobody is there any more.
+                if !joined {
+                    emit(LiveEvent::Participants {
+                        room,
+                        participants: Vec::new(),
+                    });
+                }
             }
         }
         match commands.recv_timeout(RECONNECT_DELAY) {
@@ -292,12 +335,13 @@ pub fn run(
         }
     }
 }
-struct Active {
+/// A drawing the firmware holds, in the order it will send them.
+struct Sending {
     id: u32,
     bitmap: Vec<u8>,
     deadline: Instant,
     started: Instant,
-    progress: Option<(u8, u32, usize)>,
+    progress: Option<(u8, u8, usize)>,
 }
 struct Session<'a> {
     station: MacAddress,
@@ -309,12 +353,10 @@ struct Session<'a> {
     profiles: BTreeMap<MacAddress, PictoChatProfile>,
     members: Vec<MacAddress>,
     assemblers: [MessageReassembler; HOST_FRAGMENT_SIZES.len()],
-    completed: VecDeque<(MacAddress, u16, [u8; TRANSFER_TAG.len()])>,
+    completed: VecDeque<(MacAddress, u16, [u8; TRANSFER_TAG_LEN])>,
     ready: bool,
-    active: Option<Active>,
+    sending: VecDeque<Sending>,
     queue: VecDeque<(u32, Vec<u8>)>,
-    sequence: u16,
-    next_fragment: u16,
 }
 impl Session<'_> {
     fn participants(&self, emit: &impl Fn(LiveEvent)) {
@@ -414,31 +456,29 @@ impl Session<'_> {
         }
     }
     fn progress(&mut self, p: &link::Packet, emit: &impl Fn(LiveEvent)) {
-        let Some(a) = self.active.as_mut().filter(|a| a.id == p.id) else {
+        let waiting = self.queue.len() + self.sending.len().saturating_sub(1);
+        let Some(drawing) = self.sending.iter_mut().find(|drawing| drawing.id == p.id) else {
             return;
         };
-        let echoed = status_counter(p, link::STATUS_ECHOED_COUNTER);
-        let bodies_sent = p.payload[link::STATUS_SENT_OFFSET];
-        let current = (bodies_sent, echoed, self.queue.len());
-        if a.progress == Some(current) {
+        let sent = p.payload[link::STATUS_SENT_OFFSET];
+        let total = p.payload[link::STATUS_TOTAL_OFFSET];
+        let echoed = p.payload[link::STATUS_ECHOED_OFFSET];
+        let current = (sent, echoed, waiting);
+        if drawing.progress == Some(current) {
             return;
         }
-        a.progress = Some(current);
-        // Fragments exclude the announcement (sent first) and the completion.
-        let total = p.payload[link::STATUS_COUNT_OFFSET].saturating_sub(link::CONTROL_BODIES);
-        let sent = bodies_sent.saturating_sub(1).min(total);
+        drawing.progress = Some(current);
         emit(LiveEvent::State {
             state: "sending",
             detail: format!(
-                "Drawing {}: {sent}/{total} fragments sent, {echoed} confirmed · {} waiting",
-                a.id,
-                self.queue.len()
+                "Drawing {}: {sent}/{total} fragments sent, {echoed} confirmed · {waiting} waiting",
+                drawing.id
             ),
         });
     }
     fn packet(&mut self, p: &link::Packet, emit: &impl Fn(LiveEvent)) -> Result<()> {
         match p.kind {
-            link::RX => self.receive(p.data(), emit),
+            link::RX => self.receive(&p.payload, emit),
             link::GAP => {
                 tracing::warn!("ESP32 USB receive gap; discarding incomplete incoming drawings");
                 self.assemblers = host_reassemblers();
@@ -451,70 +491,66 @@ impl Session<'_> {
             }
             link::DIAG => {
                 let counters: Vec<u32> = p
-                    .data()
+                    .payload
                     .chunks_exact(size_of::<u32>())
                     .filter_map(|counter| counter.try_into().ok())
                     .map(u32::from_le_bytes)
                     .collect();
                 tracing::debug!(?counters, "ESP32 radio diagnostics");
             }
-            link::STATUS if p.len == link::STATUS_LEN => {
-                tracing::debug!(transfer = p.id, status = ?p.data(), "ESP32 status");
-                let state = p.payload[link::STATUS_STATE_OFFSET];
-                self.slot = p.payload[link::STATUS_SLOT_OFFSET];
+            link::READY if p.payload.len() == link::READY_LEN => {
                 self.host = MacAddress(
-                    p.payload[link::STATUS_HOST_OFFSET..link::STATUS_HOST_OFFSET + MAC_ADDRESS_LEN]
+                    p.payload[link::READY_HOST_OFFSET..link::READY_HOST_OFFSET + link::MAC_LEN]
                         .try_into()?,
                 );
-                let ready = state == link::STATE_CONNECTED
-                    && p.payload[link::STATUS_PHASE_OFFSET] == link::PHASE_READY;
-                if ready && !self.ready {
-                    emit(LiveEvent::Ready {
-                        host: self.host,
-                        room: self.room,
-                        slot: self.slot,
-                    });
-                }
-                self.ready = ready;
+                self.slot = p.payload[link::READY_SLOT_OFFSET];
+                self.ready = true;
+                tracing::info!(
+                    host = %self.host,
+                    slot = self.slot,
+                    channel = p.payload[link::READY_CHANNEL_OFFSET],
+                    "joined the DS room"
+                );
+                emit(LiveEvent::Ready {
+                    host: self.host,
+                    room: self.room,
+                    slot: self.slot,
+                });
+            }
+            link::DELIVERED => {
+                let Some(index) = self.sending.iter().position(|drawing| drawing.id == p.id) else {
+                    return Ok(());
+                };
+                let drawing = self.sending.remove(index).context("missing drawing")?;
+                tracing::info!(
+                    message_id = drawing.id,
+                    elapsed_ms = drawing.started.elapsed().as_millis(),
+                    "ESP32 drawing delivered"
+                );
+                emit(LiveEvent::Message {
+                    station_id: station_id(self.station),
+                    name: self.name.into(),
+                    message_id: drawing.id,
+                    bitmap: drawing.bitmap,
+                });
+                emit(LiveEvent::Delivered {
+                    message_id: drawing.id,
+                });
+            }
+            link::LEFT => bail!("{}; rejoining", left_text(&p.payload)),
+            link::STATUS if p.payload.len() == link::STATUS_LEN => {
+                tracing::debug!(transfer = p.id, status = ?p.payload, "ESP32 status");
                 self.progress(p, emit);
-                let delivered = p.payload[link::STATUS_DELIVERED_OFFSET] != 0;
-                if delivered && self.active.as_ref().is_some_and(|a| a.id == p.id) {
-                    let a = self.active.take().context("missing active message")?;
-                    tracing::info!(
-                        message_id = a.id,
-                        elapsed_ms = a.started.elapsed().as_millis(),
-                        "ESP32 drawing delivered"
-                    );
-                    emit(LiveEvent::Message {
-                        station_id: station_id(self.station),
-                        name: self.name.into(),
-                        message_id: a.id,
-                        bitmap: a.bitmap,
-                    });
-                    emit(LiveEvent::Delivered { message_id: a.id });
-                }
-                if state == link::STATE_OFF {
-                    bail!("ESP32 left the room; rejoining");
-                }
             }
             _ => {}
         }
         Ok(())
     }
 }
+
 /// One reassembler per fragment size a DS host may use.
 fn host_reassemblers() -> [MessageReassembler; HOST_FRAGMENT_SIZES.len()] {
     HOST_FRAGMENT_SIZES.map(MessageReassembler::new)
-}
-
-/// Reads one of the little-endian u32 counters at the end of a STATUS payload.
-fn status_counter(status: &link::Packet, index: usize) -> u32 {
-    let offset = link::STATUS_COUNTERS_OFFSET + index * size_of::<u32>();
-    status
-        .data()
-        .get(offset..offset + size_of::<u32>())
-        .and_then(|counter| counter.try_into().ok())
-        .map_or(0, u32::from_le_bytes)
 }
 
 /// Appends `text` as UTF-16LE, stopping before a character that would not fit
@@ -531,25 +567,37 @@ fn push_utf16_field(output: &mut Vec<u8>, text: &str, max_bytes: usize) {
     output.resize(end, 0);
 }
 
+/// Where the ESP32 is and where its radio capture goes, if anywhere.
+struct Device<'a> {
+    path: &'a str,
+    capture: Option<&'a Path>,
+}
+
 fn connected(
-    path: &str,
-    channel: u8,
+    device: &Device<'_>,
     room: u8,
     name: &str,
     profile: &crate::worker::ProfileOptions,
     commands: &Receiver<LiveCommand>,
     emit: &impl Fn(LiveEvent),
+    joined: &mut bool,
 ) -> Result<()> {
-    let mut port = Port::open(path)?;
-    let mac = port.request(link::HELLO, &[])?;
-    let station = MacAddress(
-        mac.get(..MAC_ADDRESS_LEN)
-            .context("invalid ESP32 hello")?
-            .try_into()?,
-    );
+    let mut port = Port::open(device.path)?;
+    let station = port.hello()?;
     emit(LiveEvent::Station { station });
     // Release any previous owner (e.g. a server process that restarted).
     port.request(link::LEAVE, &[])?;
+    if let Some(path) = device.capture {
+        port.capture = Some(Capture::open(path)?);
+        port.request(link::TRACE, &[1])?;
+        tracing::info!(file = %path.display(), "recording radio frames");
+    }
+    if profile.message.encode_utf16().count() * size_of::<u16>() > link::PROFILE_MESSAGE_LEN
+        || profile.message.contains('\0')
+        || profile.color > link::MAX_PROFILE_COLOR
+    {
+        bail!("invalid profile message or color");
+    }
     emit(LiveEvent::State {
         state: "connecting",
         detail: format!(
@@ -557,20 +605,8 @@ fn connected(
             char::from(b'A' + room)
         ),
     });
-    let channel = scan_channels(channel, Some(room), |channel| {
-        observe_channel(&mut port, channel)
-    })?
-    .1
-    .context("No host beacon found for the selected room; keep a DS in that room nearby")?;
-    tracing::info!(room, channel, "joining discovered room");
-    if profile.message.encode_utf16().count() * size_of::<u16>() > link::PROFILE_MESSAGE_LEN
-        || profile.message.contains('\0')
-        || profile.color > link::MAX_PROFILE_COLOR
-    {
-        bail!("invalid profile message or color");
-    }
     // Field order follows the link::JOIN_*_OFFSET layout.
-    let mut join = vec![room, channel];
+    let mut join = vec![room];
     push_utf16_field(&mut join, name, link::NICKNAME_LEN);
     push_utf16_field(&mut join, &profile.message, link::PROFILE_MESSAGE_LEN);
     join.push(profile.color);
@@ -588,17 +624,14 @@ fn connected(
         assemblers: host_reassemblers(),
         completed: VecDeque::new(),
         ready: false,
-        active: None,
+        sending: VecDeque::new(),
         queue: VecDeque::new(),
-        sequence: 0,
-        next_fragment: FIRST_FRAGMENT_NUMBER,
     };
-    session.participants(emit);
+    // The member list is published when the host's first roster arrives.
     let result = worker(&mut port, &mut session, commands, emit);
-    if let Some(a) = session.active.take() {
-        emit(LiveEvent::DeliveryTimedOut { message_id: a.id });
-    }
-    for (message_id, _) in session.queue {
+    *joined = session.ready;
+    let unfinished = session.sending.iter().map(|drawing| drawing.id);
+    for message_id in unfinished.chain(session.queue.iter().map(|(id, _)| *id)) {
         emit(LiveEvent::DeliveryTimedOut { message_id });
     }
     result
@@ -644,21 +677,22 @@ fn worker(
             }
             session.packet(&packet, emit)?;
         }
-        if !session.ready && joined_at.elapsed() > PROFILE_EXCHANGE_TIMEOUT {
-            bail!("DS profile exchange stalled; rejoining");
+        if !session.ready && joined_at.elapsed() > JOIN_TIMEOUT {
+            bail!("joining the DS room stalled; rejoining");
         }
         if last_status.elapsed() > STATUS_TIMEOUT {
             bail!("ESP32 status stream stopped");
         }
         if session
-            .active
-            .as_ref()
-            .is_some_and(|a| Instant::now() >= a.deadline)
+            .sending
+            .iter()
+            .any(|drawing| Instant::now() >= drawing.deadline)
         {
             bail!("drawing delivery timed out; resetting the physical session");
         }
+        // The firmware accepts the next drawing while it is still sending one.
         if session.ready
-            && session.active.is_none()
+            && session.sending.len() < MAX_UPLOADED_DRAWINGS
             && let Some((id, bitmap)) = session.queue.pop_front()
         {
             upload_message(port, session, id, bitmap, emit)?;
@@ -673,18 +707,8 @@ fn upload_message(
     emit: &impl Fn(LiveEvent),
 ) -> Result<()> {
     let started = Instant::now();
-    emit(LiveEvent::State {
-        state: "uploading",
-        detail: format!("Drawing {id}: preparing · {} waiting", session.queue.len()),
-    });
-    let bodies = match message_bodies(
-        session.station,
-        session.slot,
-        session.sequence,
-        session.next_fragment,
-        &bitmap,
-    ) {
-        Ok(bodies) => bodies,
+    let native = match native_drawing(session.station, &bitmap) {
+        Ok(native) => native,
         Err(error) => {
             emit(LiveEvent::Error {
                 code: "invalid_drawing",
@@ -694,236 +718,196 @@ fn upload_message(
             return Ok(());
         }
     };
-    session.sequence = session.sequence.wrapping_add(1);
-    session.next_fragment = session
-        .next_fragment
-        .wrapping_add(u16::try_from(bodies.len())? - u16::from(link::CONTROL_BODIES));
-    session.active = Some(Active {
+    let commands = draw_commands(id, &native)?;
+    for (index, command) in commands.iter().enumerate() {
+        port.request(link::DRAW, command)?;
+        emit(LiveEvent::State {
+            state: "uploading",
+            detail: format!(
+                "Drawing {id}: {}% uploaded · {} waiting",
+                (index + 1) * PERCENT / commands.len(),
+                session.queue.len()
+            ),
+        });
+    }
+    session.sending.push_back(Sending {
         id,
         bitmap,
         deadline: Instant::now() + DELIVERY_TIMEOUT,
-        started: Instant::now(),
+        started,
         progress: None,
     });
-    let mut begin = id.to_le_bytes().to_vec();
-    begin.push(u8::try_from(bodies.len())?);
-    port.request(link::BEGIN, &begin)?;
-    let uploads = upload_commands(id, &bodies)?;
-    let mut last_step = usize::MAX;
-    for upload in &uploads {
-        port.request(link::BODIES, &upload.data)?;
-        let step = upload.completed * UPLOAD_PROGRESS_STEPS / bodies.len();
-        if step != last_step {
-            emit(LiveEvent::State {
-                state: "uploading",
-                detail: format!(
-                    "Drawing {id}: {}% uploaded · {} waiting",
-                    upload.completed * PERCENT / bodies.len(),
-                    session.queue.len()
-                ),
-            });
-            last_step = step;
-        }
-    }
-    port.request(link::COMMIT, &id.to_le_bytes())?;
     tracing::info!(
         message_id = id,
         upload_ms = started.elapsed().as_millis(),
-        bodies = bodies.len(),
-        commands = uploads.len(),
+        bytes = native.len(),
+        commands = commands.len(),
         "ESP32 upload complete"
     );
     Ok(())
 }
-struct UploadCommand {
-    data: Vec<u8>,
-    completed: usize,
-}
-/// Packs consecutive bodies into as few BODIES commands as fit the payload limit.
-fn upload_commands(id: u32, bodies: &[Vec<u8>]) -> Result<Vec<UploadCommand>> {
-    let mut commands = Vec::new();
-    let mut i = 0;
-    while i < bodies.len() {
-        let mut data = id.to_le_bytes().to_vec();
-        data.push(u8::try_from(i)?);
-        let mut record = [0; link::MAX_RECORD];
-        while i < bodies.len() {
-            let n = link::pack_body(&bodies[i], &mut record).context("invalid application body")?;
-            if data.len() + n > link::MAX_PAYLOAD {
-                break;
-            }
-            data.extend_from_slice(&record[..n]);
-            i += 1;
-        }
-        commands.push(UploadCommand { data, completed: i });
-    }
-    Ok(commands)
+
+/// Encodes an API bitmap as the native drawing the DS displays. The firmware
+/// fragments it and wraps it for the radio.
+fn native_drawing(station: MacAddress, bitmap: &[u8]) -> Result<Vec<u8>> {
+    Ok(encode_message(station, &api_bitmap_to_native(bitmap)?)?)
 }
 
-fn message_bodies(
-    station: MacAddress,
-    slot: u8,
-    sequence: u16,
-    first_fragment: u16,
-    bitmap: &[u8],
-) -> Result<Vec<Vec<u8>>> {
-    let native = encode_message(station, &api_bitmap_to_native(bitmap)?)?;
-    let drawing = u32::from(sequence);
-    let transfer_counter =
-        FIRST_TRANSFER_COUNTER.wrapping_add(sequence.wrapping_mul(TRANSFER_COUNTER_STEP));
-
-    let announce = control_body(
-        ANNOUNCE_PACKET_SEQUENCE,
-        slot,
-        ANNOUNCE_MARKER,
-        [
-            u32::try_from(native.len())?,
-            FIRST_COMMAND_COUNTER + drawing * COMMAND_COUNTER_STEP,
-            NONCE_SEED ^ drawing.wrapping_mul(NONCE_MULTIPLIER),
-        ],
-        transfer_counter,
-    );
-    let mut bodies = vec![announce];
-    let first_frame_number = 0;
-    for mut fragment in fragment_payload_starting_at(
-        &native,
-        TRANSFER_TAG,
-        link::FRAGMENT_BYTES,
-        first_frame_number,
-    )? {
-        // The DS remembers fragment counters across drawings in one session.
-        fragment.frame_number = first_fragment.wrapping_add(fragment.frame_number);
-        bodies.push(encode_fragment_envelope(
-            NintendoFlow::ClientToHost,
-            &fragment,
-        )?);
-    }
-    bodies.push(control_body(
-        COMPLETION_PACKET_SEQUENCE,
-        slot,
-        COMPLETION_MARKER,
-        COMPLETION_OPAQUE_FIELDS,
-        transfer_counter.wrapping_add(1),
-    ));
-    Ok(bodies)
-}
-
-/// Builds a client transfer-control (`d0a`) body: the envelope header, then
-/// slot, marker, filler, three u32 fields and the transfer counter. For an
-/// announcement the fields are drawing length, command counter and nonce.
-fn control_body(
-    packet_sequence: u16,
-    slot: u8,
-    marker: u8,
-    fields: [u32; CONTROL_FIELDS],
-    transfer_counter: u16,
-) -> Vec<u8> {
-    let mut body = Vec::new();
-    body.extend_from_slice(&CLIENT_CONTROL_PACKET_ID.to_le_bytes());
-    body.extend_from_slice(&packet_sequence.to_le_bytes());
-    body.extend_from_slice(&CONTROL_DECLARED_LENGTH.to_le_bytes());
-    body.extend_from_slice(&[slot, marker]);
-    body.extend_from_slice(&CONTROL_FILLER.to_le_bytes());
-    for field in fields {
-        body.extend_from_slice(&field.to_le_bytes());
-    }
-    body.extend_from_slice(&transfer_counter.to_le_bytes());
-    body
+/// Splits a native drawing into DRAW payloads following the `link::DRAW_*` layout.
+fn draw_commands(id: u32, native: &[u8]) -> Result<Vec<Vec<u8>>> {
+    let total = u16::try_from(native.len()).context("drawing too large")?;
+    native
+        .chunks(link::MAX_DRAW_CHUNK)
+        .enumerate()
+        .map(|(index, chunk)| {
+            let position = u16::try_from(index * link::MAX_DRAW_CHUNK)?;
+            let mut command = id.to_le_bytes().to_vec();
+            command.extend_from_slice(&position.to_le_bytes());
+            command.extend_from_slice(&total.to_le_bytes());
+            command.extend_from_slice(chunk);
+            Ok(command)
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use picto_relay_codec::{encode_fragment_envelope, fragment_payload_starting_at};
     use std::cell::RefCell;
 
     #[test]
-    fn channel_scan_finds_target_off_preferred_channel() {
-        let mut visited = Vec::new();
-        let (counts, channel) = scan_channels(1, Some(2), |channel| {
-            visited.push(channel);
-            Ok(match channel {
-                1 => [1, 255, 255, 255],
-                7 => [255, 255, 2, 255],
-                _ => [255; 4],
-            })
-        })
-        .unwrap();
-        assert_eq!(channel, Some(7));
-        assert_eq!(counts, [1, 255, 2, 255]);
-        assert_eq!(visited, [1, 7]);
-    }
-
-    #[test]
-    fn lobby_scan_merges_channels_and_keeps_missing_rooms_unknown() {
-        let mut visited = Vec::new();
-        let (counts, channel) = scan_channels(7, None, |channel| {
-            assert!(!visited.contains(&channel));
-            visited.push(channel);
-            Ok(match channel {
-                1 => [1, 255, 255, 255],
-                13 => [255, 2, 255, 3],
-                _ => [255; 4],
-            })
-        })
-        .unwrap();
-        assert_eq!(counts, [1, 2, 255, 3]);
-        assert_eq!(channel, None);
-        assert_eq!(visited.len(), 13);
-        assert_eq!(visited[0], 7);
-    }
-
-    #[test]
-    fn packed_uploads_preserve_bodies_and_batch_sparse_full_height_traffic() {
-        let mut bitmap = vec![0; 3072];
-        bitmap[32 * 79 + 30] = 0xa5;
-        let bodies = message_bodies(MacAddress([2, 1, 2, 3, 4, 5]), 1, 0, 3, &bitmap).unwrap();
-        let packed = upload_commands(42, &bodies).unwrap();
-        assert!(packed.len() < bodies.len() / 4);
-        let mut actual = Vec::new();
-        for p in &packed {
-            assert!(p.data.len() <= link::MAX_PAYLOAD);
-            assert_eq!(usize::from(p.data[4]), actual.len());
-            let mut bytes = &p.data[5..];
-            while !bytes.is_empty() {
-                let n = link::packed_record_len(bytes).unwrap();
-                let mut body = [0; link::MAX_BODY];
-                let len = link::unpack_body(&bytes[..n], &mut body).unwrap();
-                actual.push(body[..len].to_vec());
-                bytes = &bytes[n..];
-            }
-            assert_eq!(p.completed, actual.len());
+    fn draw_commands_cover_the_drawing_in_order() {
+        let native: Vec<u8> = (0..=u8::MAX)
+            .cycle()
+            .take(link::MAX_DRAWING_BYTES)
+            .collect();
+        let commands = draw_commands(7, &native).unwrap();
+        assert_eq!(commands.len(), native.len().div_ceil(link::MAX_DRAW_CHUNK));
+        let mut rebuilt = Vec::new();
+        for command in &commands {
+            assert!(command.len() <= link::MAX_COMMAND_PAYLOAD);
+            assert_eq!(
+                command[link::DRAW_ID_OFFSET..link::DRAW_POSITION_OFFSET],
+                7u32.to_le_bytes()
+            );
+            let position = u16::from_le_bytes(
+                command[link::DRAW_POSITION_OFFSET..link::DRAW_TOTAL_OFFSET]
+                    .try_into()
+                    .unwrap(),
+            );
+            let total = u16::from_le_bytes(
+                command[link::DRAW_TOTAL_OFFSET..link::DRAW_DATA_OFFSET]
+                    .try_into()
+                    .unwrap(),
+            );
+            assert_eq!(usize::from(position), rebuilt.len());
+            assert_eq!(usize::from(total), native.len());
+            rebuilt.extend_from_slice(&command[link::DRAW_DATA_OFFSET..]);
         }
-        assert_eq!(actual, bodies);
-        let dense = upload_commands(1, &vec![vec![255; 108]; 5]).unwrap();
-        assert_eq!(dense.len(), 3);
+        assert_eq!(rebuilt, native);
     }
+
     #[test]
-    fn uploads_preserve_full_height_pixels_and_distinguish_repeated_messages() {
+    fn native_drawings_fit_the_firmware_limits_and_reject_blank_input() {
         let station = MacAddress([2, 1, 2, 3, 4, 5]);
         let mut bitmap = vec![0; 3072];
         bitmap[32 * 79 + 30] = 0xa5;
-        let bodies = message_bodies(station, 1, 0, 3, &bitmap).unwrap();
-        assert_eq!(bodies.len(), 88);
-        let repeated = message_bodies(station, 1, 1, 89, &bitmap).unwrap();
-        assert_ne!(bodies[0], repeated[0]);
-        assert_ne!(bodies.last(), repeated.last());
-        assert_ne!(
-            bodies[1], repeated[1],
-            "DS deduplicates counters across messages"
-        );
-        let wrap = message_bodies(station, 1, 2, u16::MAX, &bitmap).unwrap();
-        assert_eq!(&wrap[1][134..136], &u16::MAX.to_le_bytes());
-        assert_eq!(&wrap[2][134..136], &[0, 0]);
-        let mut bytes = Vec::new();
-        for body in &bodies[1..bodies.len() - 1] {
-            assert!(body.len() <= link::MAX_BODY);
-            let env = PictoChatEnvelope::parse(NintendoFlow::ClientToHost, body).unwrap();
-            let f = PictoChatFragment::parse(&env.payload, NintendoFlow::ClientToHost).unwrap();
-            bytes.extend_from_slice(&f.data);
-        }
-        let decoded = PictoChatMessage::parse(&bytes).unwrap();
+        let tall = native_drawing(station, &bitmap).unwrap();
+        assert_eq!(tall.len(), link::MAX_DRAWING_BYTES);
+        let mut bitmap = vec![0; 3072];
+        bitmap[30] = 0xa5;
+        let short = native_drawing(station, &bitmap).unwrap();
+        assert_eq!(short.len(), link::MIN_DRAWING_BYTES);
+        let decoded = PictoChatMessage::parse(&short).unwrap();
         assert_eq!(native_message_to_api_bitmap(&decoded), bitmap);
-        assert!(message_bodies(station, 1, 0, 3, &[0; 3072]).is_err());
+        assert!(native_drawing(station, &[0; 3072]).is_err());
+    }
+
+    /// What a DS client transmits for one drawing, built with the codec: the
+    /// announcement, the fragments and the completion. The firmware implements
+    /// this in C (`client_drawing_body`); the fixture below keeps them equal.
+    fn reference_bodies(
+        slot: u8,
+        drawing_number: u16,
+        first_frame: u16,
+        native: &[u8],
+    ) -> Vec<Vec<u8>> {
+        const FIRMWARE_FRAGMENT_BYTES: usize = 120;
+        let n = u32::from(drawing_number);
+        let transfer_counter = 5 + drawing_number * 2;
+        // Envelope: packet ID 0x8d0a, sequence 0, declared length 20.
+        let mut announce = vec![0x0a, 0x8d, 0, 0, 0x14, 0, slot, 0, 0xff, 0xff];
+        announce.extend_from_slice(&u32::try_from(native.len()).unwrap().to_le_bytes());
+        announce.extend_from_slice(&(12 + n * 3).to_le_bytes());
+        announce.extend_from_slice(&(0x75f0_3cca ^ n.wrapping_mul(0x9e37_79b9)).to_le_bytes());
+        announce.extend_from_slice(&transfer_counter.to_le_bytes());
+        let mut bodies = vec![announce];
+        for mut fragment in
+            fragment_payload_starting_at(native, [0, 0], FIRMWARE_FRAGMENT_BYTES, 0).unwrap()
+        {
+            fragment.frame_number = first_frame.wrapping_add(fragment.frame_number);
+            let mut body = encode_fragment_envelope(NintendoFlow::ClientToHost, &fragment).unwrap();
+            // The first fragment-header byte is the sender's slot; the codec's
+            // captured value is from a client in slot 1.
+            body[6] = slot;
+            bodies.push(body);
+        }
+        // Envelope sequence 3, then fields replayed from a capture.
+        let mut done = vec![
+            0x0a, 0x8d, 3, 0, 0x14, 0, slot, 4, 0xff, 0xff, 0xdd, 0x93, 0x32, 2, 1, 0xff, 0xff,
+            0xff, 0xbb, 0xc8, 0x36, 2,
+        ];
+        done.extend_from_slice(&(transfer_counter + 1).to_le_bytes());
+        bodies.push(done);
+        bodies
+    }
+
+    /// Writes or checks the fixtures that `firmware/esp32/test/test.c` replays:
+    /// a native drawing, and the bodies a client must send for it twice in one
+    /// session. Regenerate with `just protocol-header`.
+    #[test]
+    fn firmware_drawing_fixture_matches_the_codec() {
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../firmware/esp32/test/fixtures");
+        let station = MacAddress([0xac, 0x15, 0x18, 0xd6, 0x94, 0x34]);
+        let slot = 1;
+        let mut bitmap = vec![0; 3072];
+        for row in 0..80 {
+            bitmap[32 * row + 4 + row % 24] = 0x5a;
+        }
+        let native = native_drawing(station, &bitmap).unwrap();
+        assert_eq!(native.len(), link::MAX_DRAWING_BYTES);
+
+        let first = reference_bodies(slot, 0, 3, &native);
+        let fragments = u16::try_from(first.len() - 2).unwrap();
+        let second = reference_bodies(slot, 1, 3 + fragments, &native);
+        assert_ne!(
+            first[0], second[0],
+            "the DS ignores repeated control values"
+        );
+        let mut bodies = Vec::new();
+        for body in first.iter().chain(&second) {
+            bodies.push(u8::try_from(body.len()).unwrap());
+            bodies.extend_from_slice(body);
+        }
+        for (name, expected) in [("drawing.bin", &native), ("drawing-bodies.bin", &bodies)] {
+            let path = fixtures.join(name);
+            if std::env::var_os("PICTO_WRITE_FIXTURES").is_some() {
+                std::fs::write(&path, expected).unwrap();
+            }
+            assert!(
+                &std::fs::read(&path).unwrap() == expected,
+                "{name} is out of date; run `just protocol-header`"
+            );
+        }
+    }
+
+    #[test]
+    fn left_reasons_are_explained() {
+        assert!(left_text(&[link::LEFT_NO_HOST, 0, 0]).contains("open the room"));
+        assert!(left_text(&[link::LEFT_KICKED, 3, 0]).contains("reason 3"));
+        assert!(left_text(&[]).contains("unknown"));
     }
 
     #[test]
@@ -946,17 +930,11 @@ mod tests {
                     names: BTreeMap::from([(sender, "DS".into())]),
                     profiles: BTreeMap::new(),
                     members: vec![sender, station],
-                    assemblers: [
-                        MessageReassembler::new(80),
-                        MessageReassembler::new(120),
-                        MessageReassembler::new(160),
-                    ],
+                    assemblers: host_reassemblers(),
                     completed: VecDeque::new(),
                     ready: true,
-                    active: None,
+                    sending: VecDeque::new(),
                     queue: VecDeque::new(),
-                    sequence: 0,
-                    next_fragment: 3,
                 };
                 let events = RefCell::new(Vec::new());
                 let emit = |event| events.borrow_mut().push(event);

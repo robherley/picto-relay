@@ -1,6 +1,5 @@
 export PICTO_SERIAL_PORT := env("PICTO_SERIAL_PORT", "/dev/cu.usbserial-0001")
 export PICTO_RELAY_BIND := env("PICTO_RELAY_BIND", "127.0.0.1:3001")
-export PICTO_CHANNEL := env("PICTO_CHANNEL", "1")
 export PICTO_FLASH_BAUD := env("PICTO_FLASH_BAUD", "460800")
 # Set to ON to build firmware that reports radio timing counters.
 export PICTO_DIAGNOSTICS := env("PICTO_DIAGNOSTICS", "OFF")
@@ -27,7 +26,11 @@ default:
 
 # Run the web/REST server with the connected ESP32.
 server:
-    cargo run --locked -p picto-relay-server -- --backend esp32 --serial "$PICTO_SERIAL_PORT" --channel "$PICTO_CHANNEL"
+    cargo run --locked -p picto-relay-server -- --backend esp32 --serial "$PICTO_SERIAL_PORT"
+
+# Run the server and record every radio frame the ESP32 hears to capture.pcap.
+server-capture file="capture.pcap":
+    cargo run --locked -p picto-relay-server -- --backend esp32 --serial "$PICTO_SERIAL_PORT" --capture "{{file}}"
 
 # Run the web/REST server without hardware.
 server-memory:
@@ -37,6 +40,15 @@ server-memory:
 test: firmware-test
     cargo test --workspace --locked
     node --test crates/picto-relay-server/tests/drawing.test.cjs
+
+# Regenerate the firmware's protocol header and shared test fixtures from the Rust crates.
+protocol-header:
+    PICTO_WRITE_FIXTURES=1 cargo test --locked -p picto-relay-link --test firmware_fixture
+    PICTO_WRITE_FIXTURES=1 cargo test --locked -p picto-relay-server firmware_drawing_fixture
+
+# Regenerate docs/openapi.json from the server's handlers and types.
+openapi:
+    PICTO_WRITE_FIXTURES=1 cargo test --locked -p picto-relay-server checked_in_openapi_document
 
 # Build and run the firmware protocol tests on this computer (no ESP-IDF needed).
 firmware-test:

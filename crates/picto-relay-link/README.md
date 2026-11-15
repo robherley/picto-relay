@@ -1,19 +1,19 @@
 # picto-relay-link
 
-Host side of the USB wire protocol between the server and the ESP32 firmware:
-command IDs, packet framing, incremental decoding and packed drawing bodies. No
-dependencies.
+The USB protocol between the server and the ESP32 firmware, defined once: packet
+kinds, payload layouts, sizes and timeouts, plus the host side of the framing.
+No dependencies.
 
-The firmware implements the same protocol in C (`firmware/esp32/main/link.c`).
-The two are held together by one fixture file that both test suites check, so
-change them in the same commit:
+The firmware's C header, `firmware/esp32/main/link_protocol.h`, is generated
+from this crate's constants. After changing them:
 
 ```sh
-cargo test -p picto-relay-link --locked
-just firmware-test
+just protocol-header    # Rewrite the header and the shared test fixtures
+just test               # Rust and C sides against the same fixtures
 ```
 
-After an intentional format change, regenerate the fixture with
-`PICTO_WRITE_FIXTURES=1 cargo test -p picto-relay-link --test firmware_fixture`.
+`cargo test` fails if the checked-in header no longer matches the constants.
+The framing is implemented here and in `firmware/esp32/main/link.c`; both are
+tested against one fixture file.
 
-See the [USB contract](../../docs/esp32-usb.md) for commands and payload layouts.
+See the [protocol description](../../docs/esp32-usb.md).

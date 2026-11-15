@@ -4,23 +4,21 @@ use picto_relay_codec::{MAC_ADDRESS_LEN, MacAddress};
 /// Default USB serial device of the ESP32 radio.
 pub const DEFAULT_SERIAL_PORT: &str = "/dev/cu.usbserial-0001";
 
-/// Default preferred 2.4 GHz Wi-Fi channel, scanned first during discovery.
-pub const DEFAULT_WIFI_CHANNEL: u8 = 1;
-
 /// Placeholder station address used until the USB radio reports its own MAC.
 const UNASSIGNED_STATION: MacAddress = MacAddress([0; MAC_ADDRESS_LEN]);
 
 #[derive(Clone, Debug)]
 pub(crate) struct Esp32Config {
     pub port: String,
-    pub channel: u8,
+    /// File to record every radio frame the ESP32 hears or sends, if wanted.
+    pub capture: Option<std::path::PathBuf>,
     pub station: MacAddress,
 }
 impl Default for Esp32Config {
     fn default() -> Self {
         Self {
             port: DEFAULT_SERIAL_PORT.into(),
-            channel: DEFAULT_WIFI_CHANNEL,
+            capture: None,
             station: UNASSIGNED_STATION,
         }
     }
