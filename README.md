@@ -1,91 +1,79 @@
 # Picto Relay
 
-Picto Relay connects a Nintendo DS running PictoChat to a browser and versioned
-JSON API. An ESP-WROOM-32 runs the radio protocol in C; the computer runs the
-Rust web server, bitmap codec, and USB serial worker.
+Chat with a Nintendo DS running PictoChat from a browser, a JSON API, or a
+language model. An ESP32 on USB is the radio: it joins the room a DS has open
+and carries messages both ways.
 
-The ESP32 joins a DS-hosted room and exchanges profiles and drawings. Hosting a
-room on the relay is not supported. The former patched AR9271 radio, Linux monitor
-backend, and Pi software-host implementation have been retired.
+<p align="center">
+  <img src="docs/images/lobby.png" width="31%" alt="The web client's room list, styled like PictoChat">
+  <img src="docs/images/chat.png" width="31%" alt="A chat room in the web client: a model has drawn a cat on request">
+  <img src="docs/images/bot.png" width="31%" alt="The bot's greeting in a room: the fx logo and the model's name">
+</p>
 
-## Run
+## Get started
 
-Install Rust, Node.js 22.18 or newer, and `just` (`brew install just` on macOS). Building
-firmware also needs ESP-IDF v5.5.2, which `just espressif` downloads into the project; see
-the [firmware instructions](firmware/esp32/README.md).
+Install Rust, Node.js 22.18 or newer, and [just](https://just.systems)
+(`brew install just`).
 
-```sh
-just                    # List commands
-just server             # Run with the connected ESP32
-just server-memory      # Run without hardware
-```
-
-Both build the [web client](web/README.md) first; the server embeds it.
-
-Stop the server before uploading firmware so the serial port is free:
+**Without hardware.** Rooms live in memory; open it in two tabs to chat.
 
 ```sh
-just espressif          # Once: download ESP-IDF into .esp/
-just firmware-build     # Build only
-just firmware-upload    # Build, then flash the ESP32
+just server-memory
 ```
 
-Recipes default to `/dev/cu.usbserial-0001` and `127.0.0.1:3001`. Override them
-through environment variables:
+Then open http://localhost:3001.
+
+**With a DS.** Plug in an ESP-WROOM-32 and flash it, once:
 
 ```sh
-PICTO_SERIAL_PORT=/dev/ttyUSB0 just firmware-upload
-PICTO_SERIAL_PORT=/dev/ttyUSB0 PICTO_RELAY_BIND=127.0.0.1:3002 just server
+just espressif          # download ESP-IDF into .esp/ (about 2 GB)
+just firmware-upload    # build the firmware and flash the ESP32
 ```
 
-`PICTO_FLASH_BAUD` sets the flashing speed (default `460800`). The runtime link has
-no settings: the firmware finds the room's Wi-Fi channel itself, and firmware and
-server share one [USB protocol](docs/esp32-usb.md). Flash the firmware from the same
-checkout as the server you run; a mismatch is reported when the server connects.
-
-Open http://localhost:3001/, enter a nickname, and join the room open on the DS.
-Only one API session can own the ESP32. For hardware-free UI/API development,
-`just server-memory` uses the in-memory backend.
-
-## Components
-
-- [Server](crates/picto-relay-server/README.md): JSON API, sessions, and USB worker.
-- [Web client](web/README.md): the PictoChat-style browser UI, in React.
-- [Codec](crates/picto-relay-codec/README.md): captured Nintendo packet and drawing formats.
-- [USB link](crates/picto-relay-link/README.md): the USB protocol definition and host-side framing.
-- [Firmware](firmware/esp32/README.md): C protocol state machine and ESP-IDF radio hooks.
-
-See the [JSON API](docs/json-api.md) and its [OpenAPI schema](docs/openapi.json), [protocol reference](docs/pictochat-protocol.md),
-[packet shapes](docs/packet-shapes.md), and [capture evidence](docs/protocol-evidence.md).
-Captures and hardware evidence are bundled in one [archive](captures/README.md).
-Earlier investigations are retained under [docs/history](docs/history/README.md);
-their commands and runtime descriptions are historical, not supported workflows.
-
-## Verify
+Open PictoChat on the DS, enter a room, and start the server:
 
 ```sh
-just test               # Web client, Rust and firmware protocol tests
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+just server
 ```
 
-None of these need hardware or ESP-IDF; the firmware protocol code is compiled
-and tested on the host. Only `just firmware-build` needs ESP-IDF.
+Then open http://localhost:3001 and join the same room.
 
-## Hardware drawing benchmark
-
-Stop the server and leave a DS in the selected room, then run:
+**With a model in the room.** The [bot](bot/README.md) hosts a language model
+that people on the DS can talk to and ask for drawings. It reaches models
+through [AI Gateway](https://vercel.com/docs/ai-gateway), so link it to a
+Vercel project once (`cd bot && vercel link`) or set `AI_GATEWAY_API_KEY`.
+Then, beside a running server:
 
 ```sh
-just benchmark
-PICTO_BENCH_ROOM=2 PICTO_BENCH_TRIALS=5 PICTO_BENCH_PATTERN=dense just benchmark
+just bot --room A --model anthropic/claude-haiku-5.5 --name Claude
 ```
 
-This ignored Rust integration test owns the ESP32 session and sends visible
-full-height drawings. Rooms are 0–3 (A–D); defaults are Room A, three trials, and
-`cross` (border with diagonals). `dense` sends a checkerboard. The serial port
-setting is the same as `just server`.
+The ESP32 holds one session at a time, so use either the browser or the bot
+with a DS, not both.
 
-Each trial reports submission-to-DS-delivery time; upload timing is logged with
-`RUST_LOG=picto_relay_server=debug`. The test fails on
-reconnection, delivery failure, or timeout and releases its session afterward.
-Normal `cargo test` runs skip this hardware test.
+## Environment
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `PICTO_SERIAL_PORT` | `/dev/cu.usbserial-0001` | The ESP32's serial port |
+| `PICTO_RELAY_BIND` | `127.0.0.1:3001` | Address the server listens on |
+| `PICTO_RELAY_URL` | `http://127.0.0.1:3001` | Server the bot connects to |
+| `AI_GATEWAY_API_KEY` | none | The bot's AI Gateway key, when `bot/` is not linked to a Vercel project |
+| `PICTO_FLASH_BAUD` | `460800` | Speed for flashing the firmware |
+
+```sh
+PICTO_SERIAL_PORT=/dev/ttyUSB0 just server
+```
+
+## More
+
+`just` lists every command. `just test` runs all the tests; none need hardware.
+
+- [Web client](web/README.md), [bot](bot/README.md), [server](crates/picto-relay-server/README.md) and [firmware](firmware/esp32/README.md)
+- [JSON API](docs/json-api.md) and its [OpenAPI schema](docs/openapi.json)
+- [PictoChat protocol](docs/pictochat-protocol.md), [packet shapes](docs/packet-shapes.md), [capture evidence](docs/protocol-evidence.md) and the [USB protocol](docs/esp32-usb.md)
+- [Radio captures](captures/README.md) and [earlier investigations](docs/history/README.md)
+
+## License
+
+[MIT](LICENSE)

@@ -58,3 +58,22 @@ See [json-api.md](../../docs/json-api.md) for endpoints and event shapes. The
 OpenAPI schema is served at `/api/v1/openapi.json` and checked in as
 [`docs/openapi.json`](../../docs/openapi.json); regenerate it with `just openapi`
 after changing a handler or an API type.
+
+## Hardware drawing benchmark
+
+Stop the server and leave a DS in the selected room, then run:
+
+```sh
+just benchmark
+PICTO_BENCH_ROOM=2 PICTO_BENCH_TRIALS=5 PICTO_BENCH_PATTERN=dense just benchmark
+```
+
+This ignored Rust integration test owns the ESP32 session and sends visible
+full-height drawings. Rooms are 0–3 (A–D); defaults are Room A, three trials, and
+`cross` (border with diagonals). `dense` sends a checkerboard. The serial port
+setting is the same as `just server`.
+
+Each trial reports submission-to-DS-delivery time; upload timing is logged with
+`RUST_LOG=picto_relay_server=debug`. The test fails on
+reconnection, delivery failure, or timeout and releases its session afterward.
+Normal `cargo test` runs skip this hardware test.
