@@ -48,9 +48,21 @@ web-dev: _web-deps
 _web-deps:
     @[ web/node_modules/.package-lock.json -nt web/package-lock.json ] || npm --prefix web ci --no-audit --no-fund
 
+# Host a model in a PictoChat room: just bot --room A --model <id> [--name <nickname>]
+[positional-arguments]
+bot *flags: _bot-deps
+    @# With no API key, use the linked Vercel project's token, which lasts 12 hours: fetch a fresh one.
+    @[ -n "${AI_GATEWAY_API_KEY:-}" ] || [ ! -e bot/.vercel/project.json ] || vercel env pull --yes --cwd bot >/dev/null 2>&1 || echo "Could not fetch a fresh Vercel token; try: vercel env pull --cwd bot" >&2
+    @npm --prefix bot start --silent -- "$@"
+
+# Install the bot's dependencies when package-lock.json has changed.
+_bot-deps:
+    @[ bot/node_modules/.package-lock.json -nt bot/package-lock.json ] || npm --prefix bot ci --no-audit --no-fund
+
 # Run every test that needs no hardware.
-test: firmware-test web-build
+test: firmware-test web-build _bot-deps
     npm --prefix web test
+    npm --prefix bot test
     cargo test --workspace --locked
 
 # Regenerate the firmware's protocol header and shared test fixtures from the Rust crates.

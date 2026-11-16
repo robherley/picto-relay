@@ -22,13 +22,21 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            bot/package-lock.json
       - name: Test and build the web client
         working-directory: web
         run: |
           npm ci
           npm test
           npm run build
+
+      - name: Test the bot
+        working-directory: bot
+        run: |
+          npm ci
+          npm test
 
       - name: Check formatting
         run: cargo fmt --all -- --check

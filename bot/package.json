@@ -1,0 +1,19 @@
+{
+  "name": "picto-relay-bot",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env.local src/main.ts",
+    "test": "tsc --noEmit && node --test"
+  },
+  "dependencies": {
+    "libfx": "0.0.17"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^6.0.3"
+  }
+}
