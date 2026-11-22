@@ -558,6 +558,13 @@ button.room {
   line-height: 14px;
 }
 
+/* A second line that matters: larger than a detail, smaller than the question. */
+.alert small.note {
+  margin-top: 2px;
+  font-size: 15px;
+  line-height: 18px;
+}
+
 /* ---- Chat: composer ------------------------------------------------------ */
 
 .tool-strip {

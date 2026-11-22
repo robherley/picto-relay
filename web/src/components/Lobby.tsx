@@ -90,7 +90,7 @@ function DeviceControls({ device, state, screen }: { device: Device; state: Devi
     <div className="alert dialog">
       <span>
         Flash Picto Relay onto the ESP32?
-        <small>Build {firmware.build}. It replaces what is on the board.</small>
+        <small className="note">It replaces what is on the board.</small>
       </span>
       <span className="device-buttons">
         <button type="button" onClick={() => void write(firmware)}>
