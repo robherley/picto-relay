@@ -172,7 +172,8 @@ impl Host {
                 .into_owned();
         let station = self
             .input
-            .get(link::HELLO_MAC_OFFSET..link::HELLO_MAC_OFFSET + link::MAC_LEN)
+            .get(link::HELLO_MAC_OFFSET..)
+            .and_then(|rest| rest.get(..link::MAC_LEN))
             .and_then(|mac| mac.try_into().ok())
             .map(MacAddress);
         self.station = station;
@@ -638,6 +639,15 @@ mod tests {
         );
     }
 
+    /// The last operation's answer, taken the way the page takes it.
+    fn output() -> Vec<u32> {
+        let mut bytes = Vec::new();
+        for index in 0..output_len() {
+            bytes.push(output_at(index));
+        }
+        bytes
+    }
+
     #[test]
     fn the_exported_functions_pass_bytes_through() {
         input_reset();
@@ -645,13 +655,13 @@ mod tests {
             input_push(value);
         }
         assert_eq!(link_encode(u32::from(link::PING), 5), 1);
-        let wire: Vec<u32> = (0..output_len()).map(|index| output_at(index)).collect();
+        let wire = output();
         assert_eq!(wire.first(), Some(&u32::from(link::DELIMITER)));
         for value in wire {
             input_push(value);
         }
         assert_eq!(link_decode(), 1);
-        let packet: Vec<u32> = (0..output_len()).map(|index| output_at(index)).collect();
+        let packet = output();
         assert_eq!(packet, [u32::from(link::PING), 5, 0, 0, 0, 3, 0, 1, 2, 3]);
         assert_eq!(output_at(1000), 0);
         assert_eq!(link_encode(999, 0), 0);

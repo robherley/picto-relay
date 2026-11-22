@@ -200,7 +200,8 @@ impl Port {
         }
         tracing::info!(build, "ESP32 firmware attached");
         let mac = data
-            .get(link::HELLO_MAC_OFFSET..link::HELLO_MAC_OFFSET + link::MAC_LEN)
+            .get(link::HELLO_MAC_OFFSET..)
+            .and_then(|rest| rest.get(..link::MAC_LEN))
             .context("invalid ESP32 hello")?;
         Ok(MacAddress(mac.try_into()?))
     }
