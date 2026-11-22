@@ -2,7 +2,9 @@
 members = [
     "crates/picto-relay-link",
     "crates/picto-relay-codec",
+    "crates/picto-relay-session",
     "crates/picto-relay-server",
+    "crates/picto-relay-wasm",
 ]
 resolver = "3"
 
@@ -19,6 +21,7 @@ base64 = "0.22"
 clap = { version = "4.6.4", features = ["derive"] }
 picto-relay-codec = { path = "crates/picto-relay-codec" }
 picto-relay-server = { path = "crates/picto-relay-server" }
+picto-relay-session = { path = "crates/picto-relay-session" }
 # `debug-embed` so debug builds carry the web client too, like release builds.
 rust-embed = { version = "8.14", features = ["debug-embed", "mime-guess"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -38,3 +41,12 @@ warnings = "deny"
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
+
+# The WebAssembly module the web client loads (`just wasm`): small before fast.
+[profile.wasm]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

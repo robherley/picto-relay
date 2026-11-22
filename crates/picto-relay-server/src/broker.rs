@@ -945,12 +945,7 @@ impl Esp32Broker {
     }
 }
 
-/// Derives a participant identifier from the low four octets of a MAC,
-/// skipping the two leading vendor octets.
-pub(crate) fn station_id(mac: picto_relay_codec::MacAddress) -> u32 {
-    let [_, _, device_octets @ ..] = mac.octets();
-    u32::from_be_bytes(device_octets)
-}
+pub(crate) use picto_relay_session::station_id;
 
 #[cfg(test)]
 mod tests {

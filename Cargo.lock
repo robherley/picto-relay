@@ -612,6 +612,7 @@ dependencies = [
  "clap",
  "picto-relay-codec",
  "picto-relay-link",
+ "picto-relay-session",
  "rust-embed",
  "serde",
  "serde_json",
@@ -622,6 +623,27 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "utoipa",
+]
+
+[[package]]
+name = "picto-relay-session"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "picto-relay-codec",
+ "picto-relay-link",
+]
+
+[[package]]
+name = "picto-relay-wasm"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "picto-relay-codec",
+ "picto-relay-link",
+ "picto-relay-session",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

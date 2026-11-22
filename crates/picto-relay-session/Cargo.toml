@@ -1,0 +1,15 @@
+[package]
+name = "picto-relay-session"
+description = "The host's side of a Picto Relay session, with no I/O: what to send the ESP32 and what its packets mean"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+picto-relay-codec.workspace = true
+picto-relay-link = { path = "../picto-relay-link" }
+
+[lints]
+workspace = true

@@ -1,17 +1,15 @@
 //! Blocking serial worker isolated from the async HTTP broker.
-use crate::bitmap::{api_bitmap_to_native, native_message_to_api_bitmap};
-use crate::broker::station_id;
 use crate::capture::Capture;
 use crate::worker::{LiveCommand, LiveEvent, LiveParticipant};
 use anyhow::{Context, Result, bail};
-use picto_relay_codec::{
-    MAC_ADDRESS_LEN, MacAddress, MessageReassembler, NintendoFlow, PictoChatEnvelope,
-    PictoChatFragment, PictoChatMessage, PictoChatProfile, PictoChatRoster, ReassemblyKey,
-    encode_message,
-};
+use picto_relay_codec::MacAddress;
 use picto_relay_link as link;
+use picto_relay_session::{
+    Room, RoomEvent, draw_commands, join_payload, left_text, native_drawing, station_id,
+    status_text,
+};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::VecDeque,
     fs::{File, OpenOptions},
     io::{Read, Write},
     path::Path,
@@ -60,23 +58,8 @@ const DELIVERY_TIMEOUT: Duration = Duration::from_secs(40);
 const MAX_UPLOADED_DRAWINGS: usize = 2;
 /// Drawings that may wait on the host behind those.
 const MAX_QUEUED_DRAWINGS: usize = 4;
-/// Recently completed incoming drawings remembered to drop host repeats.
-const MAX_COMPLETED_DRAWINGS: usize = 128;
-/// Fragment sizes a DS host may use when rebroadcasting drawings, in bytes.
-const HOST_FRAGMENT_SIZES: [usize; 3] = [80, 120, 160];
-/// Colors in the `PictoChat` palette.
-const PALETTE_COLORS: usize = 16;
 /// Scale of a percentage.
 const PERCENT: usize = 100;
-
-// ---- PictoChat application packets -----------------------------------------
-
-/// Mask removing the flag bit whose meaning is not established from a packet ID.
-const PACKET_ID_MASK: u16 = 0x7fff;
-/// Packet ID of the host's participant roster.
-const ROSTER_PACKET_ID: u16 = 0x1c34;
-/// Length of the opaque transfer tag that identifies a host rebroadcast.
-const TRANSFER_TAG_LEN: usize = 2;
 
 struct Port {
     file: File,
@@ -223,39 +206,6 @@ impl Port {
     }
 }
 
-fn status_text(status: u8) -> &'static str {
-    match status {
-        link::STATUS_OK => "ok",
-        link::STATUS_BUSY => "busy",
-        link::STATUS_INVALID => "malformed command",
-        link::STATUS_WRONG_STATE => "not possible in the current session state",
-        link::STATUS_VERSION_MISMATCH => "protocol version mismatch",
-        link::STATUS_NOT_ATTACHED => "no HELLO was sent",
-        _ => "unknown status",
-    }
-}
-
-/// Explains a LEFT event to the user.
-fn left_text(payload: &[u8]) -> String {
-    let reason = payload.get(link::LEFT_REASON_OFFSET).copied();
-    let code = payload
-        .get(link::LEFT_CODE_OFFSET..link::LEFT_LEN)
-        .and_then(|code| code.try_into().ok())
-        .map_or(0, u16::from_le_bytes);
-    match reason {
-        Some(link::LEFT_REQUESTED) => "the relay left the room".into(),
-        Some(link::LEFT_NO_HOST) => {
-            "no DS is hosting that room nearby; open the room on a DS first".into()
-        }
-        Some(link::LEFT_JOIN_TIMEOUT) => "the DS did not answer the join request".into(),
-        Some(link::LEFT_REJECTED) => format!("the DS refused the join (status {code})"),
-        Some(link::LEFT_KICKED) => format!("the DS closed the session (reason {code})"),
-        Some(link::LEFT_HOST_LOST) => "the DS stopped responding".into(),
-        Some(link::LEFT_RADIO_STALLED) => "the ESP32 radio stalled".into(),
-        _ => "the session ended for an unknown reason".into(),
-    }
-}
-
 /// Asks the idle firmware to sweep every channel and reports the rooms it saw.
 /// Called only when no session worker owns the serial port.
 pub(crate) fn discover(path: &str) -> Result<RoomCounts> {
@@ -344,115 +294,48 @@ struct Sending {
     progress: Option<(u8, u8, usize)>,
 }
 struct Session<'a> {
-    station: MacAddress,
-    host: MacAddress,
+    /// The room's people and incoming drawings, as the host DS reports them.
+    members: Room,
     room: u8,
     slot: u8,
     name: &'a str,
-    names: BTreeMap<MacAddress, String>,
-    profiles: BTreeMap<MacAddress, PictoChatProfile>,
-    members: Vec<MacAddress>,
-    assemblers: [MessageReassembler; HOST_FRAGMENT_SIZES.len()],
-    completed: VecDeque<(MacAddress, u16, [u8; TRANSFER_TAG_LEN])>,
     ready: bool,
     sending: VecDeque<Sending>,
     queue: VecDeque<(u32, Vec<u8>)>,
 }
 impl Session<'_> {
-    fn participants(&self, emit: &impl Fn(LiveEvent)) {
-        emit(LiveEvent::Participants {
-            room: self.room,
-            participants: self
-                .members
-                .iter()
-                .map(|mac| LiveParticipant {
-                    station: *mac,
-                    name: self
-                        .names
-                        .get(mac)
-                        .cloned()
-                        .unwrap_or_else(|| mac.to_string()),
-                })
-                .collect(),
-        });
-    }
     fn receive(&mut self, body: &[u8], emit: &impl Fn(LiveEvent)) {
-        let Ok(env) = PictoChatEnvelope::parse(NintendoFlow::HostToClient, body) else {
-            return;
-        };
-        if env.packet_id & PACKET_ID_MASK == ROSTER_PACKET_ID {
-            if let Ok(roster) = PictoChatRoster::parse(&env.payload) {
-                let members: Vec<_> = roster.members.into_iter().flatten().collect();
-                if members != self.members {
-                    self.members = members;
-                    self.participants(emit);
+        for event in self.members.receive(body) {
+            match event {
+                RoomEvent::Participants(participants) => emit(LiveEvent::Participants {
+                    room: self.room,
+                    participants: participants
+                        .into_iter()
+                        .map(|participant| LiveParticipant {
+                            station: participant.station,
+                            name: participant.name,
+                        })
+                        .collect(),
+                }),
+                RoomEvent::Profile(profile) => {
+                    tracing::debug!(station = %profile.station, nickname = %profile.nickname, profile_message = %profile.message, profile_color = profile.color, "DS profile received");
+                    emit(LiveEvent::Profile(profile));
+                }
+                RoomEvent::Message {
+                    sender,
+                    name,
+                    message_id,
+                    bitmap,
+                } => {
+                    tracing::debug!(%sender, "DS drawing received");
+                    emit(LiveEvent::Message {
+                        station_id: station_id(sender),
+                        name,
+                        message_id,
+                        bitmap,
+                    });
                 }
             }
-            return;
-        }
-        if !env.is_message_fragment() {
-            return;
-        }
-        let Ok(fragment) = PictoChatFragment::parse(&env.payload, NintendoFlow::HostToClient)
-        else {
-            return;
-        };
-        if let Ok(profile) = PictoChatProfile::parse(&fragment.data) {
-            tracing::debug!(station = %profile.station, nickname = %profile.nickname, profile_message = %profile.message, profile_color = profile.color, "DS profile received");
-            let changed = self.profiles.get(&profile.station).is_none_or(|old| {
-                old.nickname != profile.nickname
-                    || old.message != profile.message
-                    || old.color != profile.color
-            });
-            if changed {
-                self.profiles.insert(profile.station, profile.clone());
-                emit(LiveEvent::Profile(profile.clone()));
-            }
-            if self.names.get(&profile.station) != Some(&profile.nickname) {
-                self.names.insert(profile.station, profile.nickname);
-                self.participants(emit);
-            }
-            return;
-        }
-        for assembler in &mut self.assemblers {
-            let key = ReassemblyKey {
-                source: self.host,
-                opaque_id: fragment.opaque_id,
-            };
-            let Ok(Some(bytes)) = assembler.push(key, &fragment) else {
-                continue;
-            };
-            let Ok(message) = PictoChatMessage::parse(&bytes) else {
-                continue;
-            };
-            let sender = message.sender();
-            let key = (sender, fragment.frame_number, fragment.opaque_id);
-            if self.completed.contains(&key) {
-                continue;
-            }
-            self.completed.push_back(key);
-            if self.completed.len() > MAX_COMPLETED_DRAWINGS {
-                self.completed.pop_front();
-            }
-            // The device's exact echo tracking publishes our own message once.
-            if sender == self.station {
-                continue;
-            }
-            let mut palette_counts = [0usize; PALETTE_COLORS];
-            for &pixel in message.pixels() {
-                palette_counts[usize::from(pixel)] += 1;
-            }
-            tracing::debug!(%sender, ?palette_counts, "DS drawing received");
-            emit(LiveEvent::Message {
-                station_id: station_id(sender),
-                name: self
-                    .names
-                    .get(&sender)
-                    .cloned()
-                    .unwrap_or_else(|| sender.to_string()),
-                message_id: u32::from(fragment.frame_number),
-                bitmap: native_message_to_api_bitmap(&message),
-            });
         }
     }
     fn progress(&mut self, p: &link::Packet, emit: &impl Fn(LiveEvent)) {
@@ -481,7 +364,7 @@ impl Session<'_> {
             link::RX => self.receive(&p.payload, emit),
             link::GAP => {
                 tracing::warn!("ESP32 USB receive gap; discarding incomplete incoming drawings");
-                self.assemblers = host_reassemblers();
+                self.members.discard_incoming();
                 emit(LiveEvent::Error {
                     code: "usb_rx_gap",
                     message:
@@ -499,20 +382,21 @@ impl Session<'_> {
                 tracing::debug!(?counters, "ESP32 radio diagnostics");
             }
             link::READY if p.payload.len() == link::READY_LEN => {
-                self.host = MacAddress(
+                let host = MacAddress(
                     p.payload[link::READY_HOST_OFFSET..link::READY_HOST_OFFSET + link::MAC_LEN]
                         .try_into()?,
                 );
+                self.members.set_host(host);
                 self.slot = p.payload[link::READY_SLOT_OFFSET];
                 self.ready = true;
                 tracing::info!(
-                    host = %self.host,
+                    %host,
                     slot = self.slot,
                     channel = p.payload[link::READY_CHANNEL_OFFSET],
                     "joined the DS room"
                 );
                 emit(LiveEvent::Ready {
-                    host: self.host,
+                    host,
                     room: self.room,
                     slot: self.slot,
                 });
@@ -528,7 +412,7 @@ impl Session<'_> {
                     "ESP32 drawing delivered"
                 );
                 emit(LiveEvent::Message {
-                    station_id: station_id(self.station),
+                    station_id: station_id(self.members.station()),
                     name: self.name.into(),
                     message_id: drawing.id,
                     bitmap: drawing.bitmap,
@@ -546,25 +430,6 @@ impl Session<'_> {
         }
         Ok(())
     }
-}
-
-/// One reassembler per fragment size a DS host may use.
-fn host_reassemblers() -> [MessageReassembler; HOST_FRAGMENT_SIZES.len()] {
-    HOST_FRAGMENT_SIZES.map(MessageReassembler::new)
-}
-
-/// Appends `text` as UTF-16LE, stopping before a character that would not fit
-/// in `max_bytes`, then zero-pads the field to exactly `max_bytes`.
-fn push_utf16_field(output: &mut Vec<u8>, text: &str, max_bytes: usize) {
-    let end = output.len() + max_bytes;
-    for unit in text.encode_utf16() {
-        let bytes = unit.to_le_bytes();
-        if output.len() + bytes.len() > end {
-            break;
-        }
-        output.extend_from_slice(&bytes);
-    }
-    output.resize(end, 0);
 }
 
 /// Where the ESP32 is and where its radio capture goes, if anywhere.
@@ -592,12 +457,7 @@ fn connected(
         port.request(link::TRACE, &[1])?;
         tracing::info!(file = %path.display(), "recording radio frames");
     }
-    if profile.message.encode_utf16().count() * size_of::<u16>() > link::PROFILE_MESSAGE_LEN
-        || profile.message.contains('\0')
-        || profile.color > link::MAX_PROFILE_COLOR
-    {
-        bail!("invalid profile message or color");
-    }
+    let join = join_payload(room, name, &profile.message, profile.color)?;
     emit(LiveEvent::State {
         state: "connecting",
         detail: format!(
@@ -605,24 +465,13 @@ fn connected(
             char::from(b'A' + room)
         ),
     });
-    // Field order follows the link::JOIN_*_OFFSET layout.
-    let mut join = vec![room];
-    push_utf16_field(&mut join, name, link::NICKNAME_LEN);
-    push_utf16_field(&mut join, &profile.message, link::PROFILE_MESSAGE_LEN);
-    join.push(profile.color);
     port.request(link::JOIN, &join)?;
     port.events.clear();
     let mut session = Session {
-        station,
-        host: MacAddress([0; MAC_ADDRESS_LEN]),
+        members: Room::new(station, name),
         room,
         slot: 0,
         name,
-        names: BTreeMap::from([(station, name.into())]),
-        profiles: BTreeMap::new(),
-        members: vec![station],
-        assemblers: host_reassemblers(),
-        completed: VecDeque::new(),
         ready: false,
         sending: VecDeque::new(),
         queue: VecDeque::new(),
@@ -707,7 +556,7 @@ fn upload_message(
     emit: &impl Fn(LiveEvent),
 ) -> Result<()> {
     let started = Instant::now();
-    let native = match native_drawing(session.station, &bitmap) {
+    let native = match native_drawing(session.members.station(), &bitmap) {
         Ok(native) => native,
         Err(error) => {
             emit(LiveEvent::Error {
@@ -747,85 +596,10 @@ fn upload_message(
     Ok(())
 }
 
-/// Encodes an API bitmap as the native drawing the DS displays. The firmware
-/// fragments it and wraps it for the radio.
-fn native_drawing(station: MacAddress, bitmap: &[u8]) -> Result<Vec<u8>> {
-    Ok(encode_message(station, &api_bitmap_to_native(bitmap)?)?)
-}
-
-/// Splits a native drawing into DRAW payloads following the `link::DRAW_*` layout.
-fn draw_commands(id: u32, native: &[u8]) -> Result<Vec<Vec<u8>>> {
-    let total = u16::try_from(native.len()).context("drawing too large")?;
-    native
-        .chunks(link::MAX_DRAW_CHUNK)
-        .enumerate()
-        .map(|(index, chunk)| {
-            let position = u16::try_from(index * link::MAX_DRAW_CHUNK)?;
-            let mut command = id.to_le_bytes().to_vec();
-            command.extend_from_slice(&position.to_le_bytes());
-            command.extend_from_slice(&total.to_le_bytes());
-            command.extend_from_slice(chunk);
-            Ok(command)
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use picto_relay_codec::{encode_fragment_envelope, fragment_payload_starting_at};
-    use std::cell::RefCell;
-
-    #[test]
-    fn draw_commands_cover_the_drawing_in_order() {
-        let native: Vec<u8> = (0..=u8::MAX)
-            .cycle()
-            .take(link::MAX_DRAWING_BYTES)
-            .collect();
-        let commands = draw_commands(7, &native).unwrap();
-        assert_eq!(commands.len(), native.len().div_ceil(link::MAX_DRAW_CHUNK));
-        let mut rebuilt = Vec::new();
-        for command in &commands {
-            assert!(command.len() <= link::MAX_COMMAND_PAYLOAD);
-            assert_eq!(
-                command[link::DRAW_ID_OFFSET..link::DRAW_POSITION_OFFSET],
-                7u32.to_le_bytes()
-            );
-            let position = u16::from_le_bytes(
-                command[link::DRAW_POSITION_OFFSET..link::DRAW_TOTAL_OFFSET]
-                    .try_into()
-                    .unwrap(),
-            );
-            let total = u16::from_le_bytes(
-                command[link::DRAW_TOTAL_OFFSET..link::DRAW_DATA_OFFSET]
-                    .try_into()
-                    .unwrap(),
-            );
-            assert_eq!(usize::from(position), rebuilt.len());
-            assert_eq!(usize::from(total), native.len());
-            rebuilt.extend_from_slice(&command[link::DRAW_DATA_OFFSET..]);
-        }
-        assert_eq!(rebuilt, native);
-    }
-
-    #[test]
-    fn native_drawings_fit_the_firmware_limits_and_reject_blank_input() {
-        let station = MacAddress([2, 1, 2, 3, 4, 5]);
-        let mut bitmap = vec![0; 3072];
-        bitmap[32 * 79 + 30] = 0xa5;
-        let tall = native_drawing(station, &bitmap).unwrap();
-        assert_eq!(tall.len(), link::MAX_DRAWING_BYTES);
-        let mut bitmap = vec![0; 3072];
-        bitmap[30] = 0xa5;
-        let short = native_drawing(station, &bitmap).unwrap();
-        assert_eq!(short.len(), link::MIN_DRAWING_BYTES);
-        let decoded = PictoChatMessage::parse(&short).unwrap();
-        assert_eq!(
-            native_message_to_api_bitmap(&decoded),
-            crate::bitmap::palette_bitmap(&bitmap)
-        );
-        assert!(native_drawing(station, &[0; 3072]).is_err());
-    }
+    use picto_relay_codec::{NintendoFlow, encode_fragment_envelope, fragment_payload_starting_at};
 
     /// What a DS client transmits for one drawing, built with the codec: the
     /// announcement, the fragments and the completion. The firmware implements
@@ -903,66 +677,6 @@ mod tests {
                 &std::fs::read(&path).unwrap() == expected,
                 "{name} is out of date; run `just protocol-header`"
             );
-        }
-    }
-
-    #[test]
-    fn left_reasons_are_explained() {
-        assert!(left_text(&[link::LEFT_NO_HOST, 0, 0]).contains("open the room"));
-        assert!(left_text(&[link::LEFT_KICKED, 3, 0]).contains("reason 3"));
-        assert!(left_text(&[]).contains("unknown"));
-    }
-
-    #[test]
-    fn incoming_fragments_reassemble_once_for_both_host_fragment_sizes() {
-        let sender = MacAddress([0, 2, 3, 4, 5, 6]);
-        let station = MacAddress([2, 1, 2, 3, 4, 5]);
-        let mut bitmap = vec![0; 3072];
-        bitmap[32 * 50 + 20] = 0x81;
-        let mut palette = vec![0; crate::protocol::PALETTE_BITMAP_BYTES];
-        palette[128 * 50 + 20] = 0xf3;
-        for bitmap in [bitmap, palette] {
-            let native = encode_message(sender, &api_bitmap_to_native(&bitmap).unwrap()).unwrap();
-            for size in [80, 120, 160] {
-                let mut session = Session {
-                    station,
-                    host: sender,
-                    room: 0,
-                    slot: 1,
-                    name: "Relay",
-                    names: BTreeMap::from([(sender, "DS".into())]),
-                    profiles: BTreeMap::new(),
-                    members: vec![sender, station],
-                    assemblers: host_reassemblers(),
-                    completed: VecDeque::new(),
-                    ready: true,
-                    sending: VecDeque::new(),
-                    queue: VecDeque::new(),
-                };
-                let events = RefCell::new(Vec::new());
-                let emit = |event| events.borrow_mut().push(event);
-                for _ in 0..2 {
-                    for fragment in fragment_payload_starting_at(&native, [1, 2], size, 50).unwrap()
-                    {
-                        let body = encode_fragment_envelope(NintendoFlow::HostToClient, &fragment)
-                            .unwrap();
-                        session.receive(&body, &emit);
-                    }
-                }
-                let events = events.borrow();
-                assert_eq!(events.len(), 1);
-                let LiveEvent::Message {
-                    bitmap: actual,
-                    name,
-                    ..
-                } = &events[0]
-                else {
-                    panic!("expected drawing")
-                };
-                // Received drawings are always reported as palette bitmaps.
-                assert_eq!(actual, &crate::bitmap::palette_bitmap(&bitmap));
-                assert_eq!(name, "DS");
-            }
         }
     }
 }

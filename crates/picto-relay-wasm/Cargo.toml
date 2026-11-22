@@ -1,0 +1,31 @@
+[package]
+name = "picto-relay-wasm"
+description = "The host's side of a Picto Relay session as a WebAssembly module, for a web page that drives the ESP32 itself"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lib]
+# `cdylib` is the module the page loads; `rlib` lets the tests run natively.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+base64.workspace = true
+picto-relay-codec.workspace = true
+picto-relay-link = { path = "../picto-relay-link" }
+picto-relay-session.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# The workspace's lints, except that unsafe code is denied rather than
+# forbidden: a function is exported under its own name with
+# `#[unsafe(no_mangle)]`, which each export allows for itself. Nothing else
+# here is unsafe.
+[lints.rust]
+unsafe_code = "deny"
+warnings = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }

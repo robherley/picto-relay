@@ -5,7 +5,7 @@ pub mod protocol;
 
 mod esp32;
 
-mod bitmap;
+pub(crate) use picto_relay_session::bitmap;
 mod capture;
 mod worker;
 
