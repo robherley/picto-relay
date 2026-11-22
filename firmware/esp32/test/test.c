@@ -365,7 +365,8 @@ static void link_matches_the_fixture_shared_with_the_rust_host(void) {
         size_t len;
     } expected[3] = {{LINK_HELLO, 1, &version, 1},
                      {LINK_DRAW, 0x7e7d1234, every_byte, sizeof(every_byte)},
-                     {LINK_RESPONSE, 2, NULL, 0}};
+                     /* An empty payload still needs somewhere to point: memcmp may not be given NULL. */
+                     {LINK_RESPONSE, 2, &version, 0}};
 
     static link_decoder_t decoder;
     memset(&decoder, 0, sizeof(decoder));
