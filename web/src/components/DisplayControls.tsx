@@ -47,10 +47,11 @@ const MENU_ICON = [
 export function DisplayControls({ settings, display, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
-  // The size slider runs from one screen pixel per DS pixel up to the most the
-  // window has room for. Its top position means "fit": the console then keeps
-  // filling the window as the window changes.
+  // The sizes offered run from one screen pixel per DS pixel up to the most the
+  // window has room for, after "Fit": the console then takes the largest sharp
+  // size the window has room for, and keeps doing so as the window changes.
   const largest = Math.max(display.largestScale, 1);
+  const sizes = Array.from({ length: largest }, (_, index) => index + 1);
 
   // Clicking anywhere else, or Escape, closes the menu.
   useEffect(() => {
@@ -103,19 +104,21 @@ export function DisplayControls({ settings, display, onChange }: Props) {
 
           <div>
             <label htmlFor="display-scale">Size</label>
-            <input
+            <select
               id="display-scale"
-              type="range"
-              min={1}
-              max={largest}
-              step={1}
-              value={settings.scale === "fit" ? largest : Math.min(settings.scale, largest)}
-              disabled={largest === 1}
+              value={settings.scale === "fit" ? "fit" : Math.min(settings.scale, largest)}
               onChange={(event) => {
-                const scale = Number(event.target.value);
-                onChange({ scale: scale === largest ? "fit" : scale });
+                const { value } = event.target;
+                onChange({ scale: value === "fit" ? "fit" : Number(value) });
               }}
-            />
+            >
+              <option value="fit">Fit</option>
+              {sizes.map((size) => (
+                <option key={size} value={size}>
+                  {size}x
+                </option>
+              ))}
+            </select>
           </div>
 
           <div>

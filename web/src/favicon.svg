@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges">
+  <!-- A PictoChat message box: outline, paper, name tag, and a stroke of the rainbow pen. -->
+  <path fill="#30303a" d="M2 2h12v1h1v10h-1v1H2v-1H1V3h1z"/>
+  <path fill="#f8f8f8" d="M2 3h12v10H2z"/>
+  <path fill="#0059f3" d="M2 3h6v3H2z"/>
+  <path fill="#30303a" d="M8 3h1v4H2V6h6z"/>
+  <rect x="3" y="10" width="1" height="1" fill="#e850f8"/>
+  <rect x="4" y="9" width="1" height="1" fill="#f830b0"/>
+  <rect x="5" y="8" width="1" height="1" fill="#f81800"/>
+  <rect x="6" y="9" width="1" height="1" fill="#f89800"/>
+  <rect x="7" y="10" width="1" height="1" fill="#e8d800"/>
+  <rect x="8" y="11" width="1" height="1" fill="#68e000"/>
+  <rect x="9" y="10" width="1" height="1" fill="#48f0e8"/>
+  <rect x="10" y="9" width="1" height="1" fill="#00d0f8"/>
+  <rect x="11" y="8" width="1" height="1" fill="#0078f8"/>
+  <rect x="12" y="9" width="1" height="1" fill="#0040f8"/>
+</svg>

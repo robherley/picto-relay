@@ -10,7 +10,7 @@ import {
 import { type Firmware, firmwareOnOffer, flash } from "../serial/flash";
 import type { DeviceState } from "../serial/messages";
 import { Loading } from "./Loading";
-import { ICONS, PixelIcon } from "./PixelIcon";
+import { ICONS, PixelIcon, ROOM_ICONS } from "./PixelIcon";
 
 interface Props {
   profile: Profile;
@@ -202,6 +202,8 @@ export function Lobby({ profile, onProfile, gateway, joining, onJoin }: Props) {
           {ROOM_LETTERS.map((letter, room) => {
             const summary = gateway.rooms.find((candidate) => candidate.room === room);
             const observed = summary?.observed ?? false;
+            // Someone is in it: on a DS, the rooms worth joining are lit.
+            const live = observed && (summary?.participant_count ?? 0) > 0;
             const names = summary?.participants.map((participant) => participant.name).join(", ");
             return (
               <button
@@ -212,16 +214,20 @@ export function Lobby({ profile, onProfile, gateway, joining, onJoin }: Props) {
                 title={names || undefined}
                 onClick={() => onJoin(room)}
               >
-                <span className="room-icon">{letter}</span>
+                <span className="room-icon">
+                  <PixelIcon art={ROOM_ICONS[room]!} />
+                </span>
                 <span className="room-name">Chat Room {letter}</span>
                 <span className="room-count">
                   <PixelIcon art={ICONS.person} />
                   {observed ? summary?.participant_count : "--"}/{ROOM_CAPACITY}
                 </span>
-                <PixelIcon
-                  art={observed ? ICONS.signal : ICONS.noSignal}
-                  label={observed ? "In range" : "Not found"}
-                />
+                <span className={live ? "room-signal live" : "room-signal"}>
+                  <PixelIcon
+                    art={observed ? ICONS.signal : ICONS.noSignal}
+                    label={live ? "In use" : observed ? "In range" : "Not found"}
+                  />
+                </span>
               </button>
             );
           })}

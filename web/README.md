@@ -103,6 +103,6 @@ Which of the two a build is for is decided in
 - The button in the top-right corner of the page opens the display settings,
   which set how the two screens are shown: one above the
   other, side by side, or whichever fits; how large they are; and the gap between
-  them. The size slider stops at what the window has room for, and at its top
-  position the console keeps filling the window as the window changes. The
-  choices are remembered.
+  them. The sizes offered stop at what the window has room for; "Fit" takes
+  the largest sharp size that fits, and keeps doing so as the window changes.
+  The choices are remembered.

@@ -15,18 +15,38 @@ export function profileTone(profile: Profile): string {
 }
 
 const STORAGE_KEY = "picto-relay.profile";
-const DEFAULT_PROFILE: Profile = { name: "Relay", message: "", color: 11 };
+
+/**
+ * Nicknames for someone who has not chosen one: characters from Nintendo's
+ * games, each short enough for a DS profile.
+ */
+export const STARTER_NAMES = [
+  "Mario", "Luigi", "Toad", "Peach", "Yoshi", "Bowser", "Daisy", "Wario", "Waluigi", "Rosalina",
+  "Link", "Zelda", "Samus", "Kirby", "Pikachu", "Isabelle", "Tom Nook", "Olimar", "Ness", "Fox",
+];
+
+/** One of the starter names. `random` is a number from 0 up to, not including, 1. */
+export function starterName(random = Math.random()): string {
+  return STARTER_NAMES[Math.floor(random * STARTER_NAMES.length)] ?? STARTER_NAMES[0]!;
+}
+
+/** The profile of someone who has not been here before. */
+function fresh(): Profile {
+  return { name: starterName(), message: "", color: 11 };
+}
 
 function load(): Profile {
+  const starting = fresh();
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null") as Partial<Profile> | null;
     return {
-      name: stored?.name ?? DEFAULT_PROFILE.name,
-      message: stored?.message ?? DEFAULT_PROFILE.message,
-      color: stored?.color ?? DEFAULT_PROFILE.color,
+      // A name left blank was never chosen either.
+      name: stored?.name?.trim() ? stored.name : starting.name,
+      message: stored?.message ?? starting.message,
+      color: stored?.color ?? starting.color,
     };
   } catch {
-    return DEFAULT_PROFILE;
+    return starting;
   }
 }
 

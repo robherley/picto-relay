@@ -46,6 +46,81 @@ export function PixelIcon({ art, label }: { art: readonly string[]; label?: stri
   );
 }
 
+/** The letters of rooms A to D, drawn bold: white, to be outlined. */
+const ROOM_LETTERS_ART = [
+  [
+    "....oooo....",
+    "...oooooo...",
+    "..oooooooo..",
+    "..ooo..ooo..",
+    ".ooo....ooo.",
+    ".ooo....ooo.",
+    "ooo......ooo",
+    "ooo......ooo",
+    "oooooooooooo",
+    "oooooooooooo",
+    "oooooooooooo",
+    "ooo......ooo",
+    "ooo......ooo",
+    "ooo......ooo",
+    "ooo......ooo",
+  ],
+  [
+    "oooooooooo..",
+    "ooooooooooo.",
+    "oooooooooooo",
+    "ooo......ooo",
+    "ooo......ooo",
+    "ooo.....oooo",
+    "ooooooooooo.",
+    "oooooooooo..",
+    "ooooooooooo.",
+    "ooo.....oooo",
+    "ooo......ooo",
+    "ooo......ooo",
+    "oooooooooooo",
+    "ooooooooooo.",
+    "oooooooooo..",
+  ],
+  [
+    "..oooooooo..",
+    ".oooooooooo.",
+    "oooooooooooo",
+    "oooo....oooo",
+    "ooo......ooo",
+    "ooo.........",
+    "ooo.........",
+    "ooo.........",
+    "ooo.........",
+    "ooo.........",
+    "ooo......ooo",
+    "oooo....oooo",
+    "oooooooooooo",
+    ".oooooooooo.",
+    "..oooooooo..",
+  ],
+  [
+    "ooooooooo...",
+    "oooooooooo..",
+    "ooooooooooo.",
+    "ooo....ooooo",
+    "ooo......ooo",
+    "ooo......ooo",
+    "ooo......ooo",
+    "ooo......ooo",
+    "ooo......ooo",
+    "ooo......ooo",
+    "ooo......ooo",
+    "ooo....ooooo",
+    "ooooooooooo.",
+    "oooooooooo..",
+    "ooooooooo...",
+  ],
+];
+
+/** The badge of each room, by room number: its letter, outlined. */
+export const ROOM_ICONS = ROOM_LETTERS_ART.map(outlined);
+
 export const ICONS = {
   up: [
     "....#....",
