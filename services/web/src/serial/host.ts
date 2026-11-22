@@ -26,7 +26,6 @@ interface Exports {
 export interface Constants {
   PROTOCOL_VERSION: number;
   BAUD: number;
-  HOST_TIMEOUT_MS: number;
   HELLO: number;
   JOIN: number;
   LEAVE: number;
@@ -46,7 +45,6 @@ export interface Constants {
   ROOMS: number;
   STATUS_LEN: number;
   LEFT_KICKED: number;
-  NO_BEACON: number;
 }
 
 /** One framed packet, in either direction. */

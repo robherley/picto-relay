@@ -116,7 +116,6 @@ impl Host {
         json_answer(&json!({
             "PROTOCOL_VERSION": link::PROTOCOL_VERSION,
             "BAUD": link::BAUD,
-            "HOST_TIMEOUT_MS": link::HOST_TIMEOUT_MS,
             "HELLO": link::HELLO,
             "JOIN": link::JOIN,
             "LEAVE": link::LEAVE,
@@ -135,7 +134,6 @@ impl Host {
             "ROOMS": link::ROOMS,
             "STATUS_LEN": link::STATUS_LEN,
             "LEFT_KICKED": link::LEFT_KICKED,
-            "NO_BEACON": link::NO_BEACON,
         }))
     }
 

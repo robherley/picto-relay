@@ -30,11 +30,6 @@ function glyph(character: string): Packed {
   return Object.hasOwn(TABLE.glyphs, character) ? TABLE.glyphs[character]! : TABLE.placeholder;
 }
 
-/** Whether the DS font can draw this character. */
-export function inFont(character: string): boolean {
-  return Object.hasOwn(TABLE.glyphs, character);
-}
-
 /** Columns the pen moves across this text. */
 export function measure(text: string): number {
   let width = 0;
