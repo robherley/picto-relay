@@ -44,6 +44,22 @@ web-build: _web-deps
 web-dev: _web-deps
     npm --prefix web run dev
 
+# Run the demo page, which drives the ESP32 itself with no server (Chrome or Edge); stop the server first.
+demo: _web-deps
+    npm --prefix web run dev:serial
+
+# Build the demo page into web/dist-demo: static files, with the last firmware build to flash.
+demo-build: _web-deps
+    npm --prefix web run build:serial
+
+# Deploy the demo page to the Vercel project this folder is linked to (`vercel link`, once).
+demo-deploy: demo-build
+    rm -rf .vercel/output
+    mkdir -p .vercel/output/static
+    cp -R web/dist-demo/. .vercel/output/static/
+    cp web/vercel-output.json .vercel/output/config.json
+    vercel deploy --prebuilt --prod
+
 # Install the web client's dependencies when package-lock.json has changed.
 _web-deps:
     @[ web/node_modules/.package-lock.json -nt web/package-lock.json ] || npm --prefix web ci --no-audit --no-fund
@@ -69,6 +85,7 @@ test: firmware-test web-build _bot-deps
 protocol-header:
     PICTO_WRITE_FIXTURES=1 cargo test --locked -p picto-relay-link --test firmware_fixture
     PICTO_WRITE_FIXTURES=1 cargo test --locked -p picto-relay-server firmware_drawing_fixture
+    PICTO_WRITE_FIXTURES=1 cargo test --locked -p picto-relay-wasm web_fixture
 
 # Regenerate docs/openapi.json from the server's handlers and types.
 openapi:

@@ -1,5 +1,6 @@
 import { type Dispatch, useEffect, useReducer } from "react";
-import { openStream, type Participant, type SessionEvent, sessionStream } from "../api/client";
+import type { Participant, SessionEvent } from "../api/client";
+import { type Session, transport } from "../api/transport";
 import { ROOM_LETTERS } from "../pictochat/constants";
 import { fromBase64, type Pixels, unpack } from "../pictochat/drawing";
 
@@ -78,7 +79,7 @@ function reduce(view: SessionView, action: Action): SessionView {
   }
   if (action.type === "rejected") return settle(view, "failed") ?? view;
   if (action.type === "connection") {
-    return action.connected ? view : { ...view, detail: "Reconnecting to the relay server" };
+    return action.connected ? view : { ...view, detail: "Reconnecting..." };
   }
   const { event, room } = action;
   const letter = ROOM_LETTERS[room];
@@ -141,9 +142,7 @@ function reduce(view: SessionView, action: Action): SessionView {
 }
 
 /** Follows a session's event stream and folds it into what the chat shows. */
-export function useSession(
-  session: { id: number; room: number } | null,
-): [SessionView, Dispatch<Action>] {
+export function useSession(session: Session | null): [SessionView, Dispatch<Action>] {
   const [view, dispatch] = useReducer(reduce, initial);
   const id = session?.id;
   const room = session?.room;
@@ -151,7 +150,7 @@ export function useSession(
   useEffect(() => {
     if (id === undefined || room === undefined) return;
     dispatch({ type: "reset" });
-    return openStream<SessionEvent>(sessionStream(id), {
+    return transport.watchSession({ id, room }, {
       onMessage: (event) => dispatch({ type: "event", room, event }),
       onConnection: (connected) => dispatch({ type: "connection", connected }),
     });

@@ -8,12 +8,17 @@
   "scripts": {
     "generate": "openapi-ts",
     "glyphs": "node scripts/font-table.mjs",
+    "wasm": "cargo build --locked -p picto-relay-wasm --target wasm32-unknown-unknown --profile wasm && cp ../target/wasm32-unknown-unknown/wasm/picto_relay_wasm.wasm src/serial/picto-relay.wasm",
+    "firmware": "node scripts/firmware.mjs",
     "dev": "npm run generate && vite",
+    "dev:serial": "npm run generate && npm run wasm && npm run firmware && vite --mode serial",
     "build": "npm run generate && tsc --noEmit && vite build",
-    "test": "npm run generate && tsc --noEmit && vitest run"
+    "build:serial": "npm run generate && npm run wasm && npm run firmware && tsc --noEmit && vite build --mode serial --outDir dist-demo",
+    "test": "npm run generate && npm run wasm && tsc --noEmit && vitest run"
   },
   "dependencies": {
     "@spiritov/ds.css": "^2.7.4",
+    "esptool-js": "^0.7.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
@@ -21,6 +26,7 @@
     "@hey-api/openapi-ts": "^0.99.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/w3c-web-serial": "^1.0.9",
     "@vitejs/plugin-react": "^6.3.0",
     "opentype.js": "^2.0.0",
     "typescript": "^6.0.3",

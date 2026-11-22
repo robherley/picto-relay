@@ -17,3 +17,9 @@ __pycache__/
 # Captures written by `just server-capture`
 /*.pcap
 /*.log
+
+# Local link to the Vercel project that hosts online/.
+.vercel
+.env*
+
+.claude

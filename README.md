@@ -51,6 +51,19 @@ just bot --room A --model anthropic/claude-haiku-5.5 --name Claude
 The ESP32 holds one session at a time, so use either the browser or the bot
 with a DS, not both.
 
+**In the browser alone.** The demo page needs no server: it flashes the ESP32
+and then talks to the DS through it, from the browser, over
+[Web Serial](https://developer.mozilla.org/docs/Web/API/Web_Serial_API). That
+means Chrome or Edge on a computer.
+
+```sh
+just firmware-build     # once, to have firmware for the page to flash
+just demo               # then open http://localhost:5173
+```
+
+Plug in the ESP32, press Flash the first time, then Connect, and join the room
+the DS has open. The JSON API and the bot still need the server.
+
 ## Environment
 
 | Variable | Default | What it sets |
@@ -69,7 +82,7 @@ PICTO_SERIAL_PORT=/dev/ttyUSB0 just server
 
 `just` lists every command. `just test` runs all the tests; none need hardware.
 
-- [Web client](web/README.md), [bot](bot/README.md), [server](crates/picto-relay-server/README.md) and [firmware](firmware/esp32/README.md)
+- [Web client](web/README.md) and its [demo page](web/README.md#the-demo-page), [bot](bot/README.md), [server](crates/picto-relay-server/README.md) and [firmware](firmware/esp32/README.md)
 - [JSON API](docs/json-api.md) and its [OpenAPI schema](docs/openapi.json)
 - [PictoChat protocol](docs/pictochat-protocol.md), [packet shapes](docs/packet-shapes.md), [capture evidence](docs/protocol-evidence.md) and the [USB protocol](docs/esp32-usb.md)
 - [Radio captures](captures/README.md) and [earlier investigations](docs/history/README.md)

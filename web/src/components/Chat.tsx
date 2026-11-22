@@ -1,15 +1,15 @@
 import { useRef, useState } from "react";
-import { errorText, sendMessage } from "../api/client";
+import { type Session, transport } from "../api/transport";
 import { type Profile, profileTone } from "../hooks/useProfile";
 import { useSession } from "../hooks/useSession";
 import { profileColor, ROOM_LETTERS } from "../pictochat/constants";
-import { pack, type Pixels, toBase64 } from "../pictochat/drawing";
+import type { Pixels } from "../pictochat/drawing";
 import { Composer } from "./Composer";
 import { Loading } from "./Loading";
 import { MessageLog } from "./MessageLog";
 
 interface Props {
-  session: { id: number; room: number };
+  session: Session;
   profile: Profile;
   onLeave: () => void;
 }
@@ -31,13 +31,10 @@ export function Chat({ session, profile, onLeave }: Props) {
 
   const send = async (pixels: Pixels) => {
     dispatch({ type: "sent", name: profile.name, pixels });
-    const { error } = await sendMessage({
-      path: { session_id: session.id },
-      body: { palette_bitmap: toBase64(pack(pixels)) },
-    });
-    if (error) {
+    const refusal = await transport.send(session, pixels);
+    if (refusal) {
       dispatch({ type: "rejected" });
-      setProblem(errorText(error));
+      setProblem(refusal);
     }
   };
 

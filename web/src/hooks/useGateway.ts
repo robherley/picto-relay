@@ -1,15 +1,16 @@
 import { useEffect, useState } from "react";
-import { getStatus, openStream, ROOMS_STREAM, type RoomsResponse, type RoomSummary } from "../api/client";
+import type { RoomSummary } from "../api/client";
+import { transport } from "../api/transport";
 
 export interface Gateway {
-  /** The server's radio backend, once known. */
+  /** What is at the far end, once known: `esp32`, `memory` or `usb`. */
   backend?: string;
   /** Whether the live room stream is connected. */
   online: boolean;
   rooms: RoomSummary[];
 }
 
-/** The server's backend and a live view of rooms A through D. */
+/** What is at the far end, and a live view of rooms A through D. */
 export function useGateway(): Gateway {
   const [backend, setBackend] = useState<string>();
   const [online, setOnline] = useState(false);
@@ -18,8 +19,8 @@ export function useGateway(): Gateway {
   useEffect(() => {
     if (!online) return;
     let current = true;
-    void getStatus().then(({ data }) => {
-      if (current && data) setBackend(data.backend);
+    void transport.backend().then((name) => {
+      if (current && name) setBackend(name);
     });
     return () => {
       current = false;
@@ -28,7 +29,7 @@ export function useGateway(): Gateway {
 
   useEffect(
     () =>
-      openStream<RoomsResponse>(ROOMS_STREAM, {
+      transport.watchRooms({
         onMessage: (response) => setRooms(response.rooms),
         onConnection: setOnline,
       }),

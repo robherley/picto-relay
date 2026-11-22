@@ -1,16 +1,11 @@
 import { type CSSProperties, useEffect, useState } from "react";
-import { createSession, deleteSession, errorText } from "./api/client";
+import { type Session, transport } from "./api/transport";
 import { Chat } from "./components/Chat";
 import { DisplayControls } from "./components/DisplayControls";
 import { Lobby } from "./components/Lobby";
 import { useGateway } from "./hooks/useGateway";
 import { profileTone, useProfile } from "./hooks/useProfile";
 import { useDisplay } from "./hooks/useDisplay";
-
-interface Session {
-  id: number;
-  room: number;
-}
 
 export function App() {
   const { settings, display, change } = useDisplay();
@@ -20,34 +15,24 @@ export function App() {
   const [joining, setJoining] = useState(false);
   const [problem, setProblem] = useState<string>();
 
-  // Closing the tab should free the room slot (and, with a radio, the radio).
-  const sessionId = session?.id;
+  // Closing the tab should free the place in the room.
   useEffect(() => {
-    if (sessionId === undefined) return;
-    const release = () => {
-      void fetch(`/api/v1/sessions/${sessionId}`, { method: "DELETE", keepalive: true });
-    };
+    if (!session) return;
+    const release = () => transport.abandon(session);
     window.addEventListener("pagehide", release);
     return () => window.removeEventListener("pagehide", release);
-  }, [sessionId]);
+  }, [session]);
 
   const join = async (room: number) => {
     setJoining(true);
-    const { data, error } = await createSession({
-      body: {
-        name: profile.name.trim(),
-        room,
-        profile_message: profile.message,
-        profile_color: profile.color,
-      },
-    });
+    const joined = await transport.join(profile, room);
     setJoining(false);
-    if (data) setSession({ id: data.session_id, room: data.room });
-    else setProblem(errorText(error));
+    if (typeof joined === "string") setProblem(joined);
+    else setSession(joined);
   };
 
   const leave = () => {
-    if (session) void deleteSession({ path: { session_id: session.id } });
+    if (session) transport.leave(session);
     setSession(null);
   };
 

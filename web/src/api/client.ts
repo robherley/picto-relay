@@ -12,7 +12,7 @@ export const sessionStream = (sessionId: number) => `/api/v1/sessions/${sessionI
 /** Delay before reopening a stream that closed. */
 const RECONNECT_MS = 1000;
 
-interface StreamHandlers<T> {
+export interface StreamHandlers<T> {
   onMessage: (value: T) => void;
   /** Called with `false` when the stream drops and `true` when it is back. */
   onConnection?: (connected: boolean) => void;

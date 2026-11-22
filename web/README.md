@@ -39,11 +39,45 @@ npm --prefix web test   # generate the client, type-check, run unit tests
 After changing an API type in the server, run `just openapi` to rewrite
 `docs/openapi.json`; the next build picks it up.
 
+## The demo page
+
+Built with `--mode serial`, the same client needs no server. The page opens
+the ESP32's serial port itself, with
+[Web Serial](https://developer.mozilla.org/docs/Web/API/Web_Serial_API), and
+does what the server's worker does: attaches to the firmware, scans for rooms,
+joins, keeps the session alive and uploads drawings. Web Serial is in Chrome
+and Edge on a computer; other browsers are told so.
+
+```sh
+just demo           # http://localhost:5173 with hot reload
+just demo-build     # static files in web/dist-demo, to host anywhere over HTTPS
+```
+
+Only one program can use the serial port, so stop the server first.
+
+- **The protocol is the server's.** What goes in each command and what each
+  packet means comes from the Rust crates the server uses, compiled to
+  WebAssembly ([picto-relay-wasm](../crates/picto-relay-wasm/README.md)).
+  [`src/serial/driver.ts`](src/serial/driver.ts) adds the timing, and is tested
+  against a stand-in for the firmware that speaks the real framing.
+- **A worker owns the port.** The firmware gives up on a host it has not heard
+  from for five seconds, and browsers slow a hidden tab's timers.
+- **It flashes too.** The Flash button writes the firmware with Espressif's
+  [esptool-js](https://github.com/espressif/esptool-js). The images are copied
+  from the last firmware build (`just firmware-build`) into `public/firmware/`
+  when the page is built; without a build, the button is not offered.
+- **It reconnects.** A port allowed once is opened again on the next visit,
+  and when the ESP32 is plugged back in.
+
+Which of the two a build is for is decided in
+[`src/api/transport.ts`](src/api/transport.ts), and is the only difference.
+
 ## Layout
 
 | Path | What it holds |
 | --- | --- |
-| `src/api/` | `client.ts` re-exports the generated client and opens the two WebSocket streams |
+| `src/api/` | `transport.ts` is how the client reaches rooms: `relay.ts` through the relay server (`client.ts` re-exports its generated client and opens its two WebSocket streams), `serial.ts` through the ESP32 directly |
+| `src/serial/` | The demo page's driver for the ESP32, the worker that runs it, the WebAssembly wrapper and the flasher |
 | `src/pictochat/` | The drawing surface, typing, keyboard pages and glyphs: no React, unit tested |
 | `scripts/` | `font-table.mjs`, which builds the glyph table from the DS font |
 | `src/hooks/` | Rooms, session events, the saved profile, and the display settings |
