@@ -36,49 +36,49 @@ server-capture file="capture.pcap": web-build
 server-memory: web-build
     cargo run --locked -p picto-relay-server -- --backend memory
 
-# Build the web client into web/dist, which the server embeds when it compiles.
+# Build the web client into services/web/dist, which the server embeds when it compiles.
 web-build: _web-deps
-    npm --prefix web run build
+    npm --prefix services/web run build
 
 # Run the web client with hot reload; needs a server running (`just server-memory`).
 web-dev: _web-deps
-    npm --prefix web run dev
+    npm --prefix services/web run dev
 
 # Run the demo page, which drives the ESP32 itself with no server (Chrome or Edge); stop the server first.
 demo: _web-deps
-    npm --prefix web run dev:serial
+    npm --prefix services/web run dev:serial
 
-# Build the demo page into web/dist-demo: static files, with the last firmware build to flash.
+# Build the demo page into services/web/dist-demo: static files, with the last firmware build to flash.
 demo-build: _web-deps
-    npm --prefix web run build:serial
+    npm --prefix services/web run build:serial
 
 # Deploy the demo page to the Vercel project this folder is linked to (`vercel link`, once).
 demo-deploy: demo-build
     rm -rf .vercel/output
     mkdir -p .vercel/output/static
-    cp -R web/dist-demo/. .vercel/output/static/
-    cp web/vercel-output.json .vercel/output/config.json
+    cp -R services/web/dist-demo/. .vercel/output/static/
+    cp services/web/vercel-output.json .vercel/output/config.json
     vercel deploy --prebuilt --prod
 
 # Install the web client's dependencies when package-lock.json has changed.
 _web-deps:
-    @[ web/node_modules/.package-lock.json -nt web/package-lock.json ] || npm --prefix web ci --no-audit --no-fund
+    @[ services/web/node_modules/.package-lock.json -nt services/web/package-lock.json ] || npm --prefix services/web ci --no-audit --no-fund
 
 # Host a model in a PictoChat room: just bot --room A --model <id> [--name <nickname>]
 [positional-arguments]
 bot *flags: _bot-deps
     @# With no API key, use the linked Vercel project's token, which lasts 12 hours: fetch a fresh one.
-    @[ -n "${AI_GATEWAY_API_KEY:-}" ] || [ ! -e bot/.vercel/project.json ] || vercel env pull --yes --cwd bot >/dev/null 2>&1 || echo "Could not fetch a fresh Vercel token; try: vercel env pull --cwd bot" >&2
-    @npm --prefix bot start --silent -- "$@"
+    @[ -n "${AI_GATEWAY_API_KEY:-}" ] || [ ! -e .vercel/project.json ] || vercel env pull services/bot/.env.local --yes >/dev/null 2>&1 || echo "Could not fetch a fresh Vercel token; try: vercel env pull services/bot/.env.local" >&2
+    @npm --prefix services/bot start --silent -- "$@"
 
 # Install the bot's dependencies when package-lock.json has changed.
 _bot-deps:
-    @[ bot/node_modules/.package-lock.json -nt bot/package-lock.json ] || npm --prefix bot ci --no-audit --no-fund
+    @[ services/bot/node_modules/.package-lock.json -nt services/bot/package-lock.json ] || npm --prefix services/bot ci --no-audit --no-fund
 
 # Run every test that needs no hardware.
 test: firmware-test web-build _bot-deps
-    npm --prefix web test
-    npm --prefix bot test
+    npm --prefix services/web test
+    npm --prefix services/bot test
     cargo test --workspace --locked
 
 # Regenerate the firmware's protocol header and shared test fixtures from the Rust crates.

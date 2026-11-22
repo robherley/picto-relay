@@ -1,4 +1,4 @@
-import table from "../../crates/picto-relay-server/src/font.json" with { type: "json" };
+import table from "../../../crates/picto-relay-server/src/font.json" with { type: "json" };
 
 import { Canvas, DRAW_LEFT, DRAW_RIGHT, NATIVE_HEIGHT, TAG_HEIGHT, TAG_RIGHT } from "./canvas.ts";
 import type { Ink } from "./canvas.ts";

@@ -2,7 +2,7 @@ node_modules/
 dist/
 # The demo page, built by `npm run build:serial`.
 dist-demo/
-# Generated from ../docs/openapi.json by `npm run generate`.
+# Generated from ../../docs/openapi.json by `npm run generate`.
 src/api/generated/
 # Built from crates/picto-relay-wasm by `npm run wasm`.
 src/serial/picto-relay.wasm

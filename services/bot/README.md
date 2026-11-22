@@ -4,22 +4,25 @@ Puts a language model in a PictoChat room. People on a Nintendo DS write or
 draw to it as they would to anyone else in the room, and it writes and draws
 back.
 
-It is a headless client of [picto-relay-server](../crates/picto-relay-server/README.md):
-it joins a room through the [JSON API](../docs/json-api.md), and hosts the
+It is a headless client of [picto-relay-server](../../crates/picto-relay-server/README.md):
+it joins a room through the [JSON API](../../docs/json-api.md), and hosts the
 model with [libfx](https://fx.sh/docs/lib), the library form of the fx agent.
 
 ## Run
 
 libfx reaches models through [AI Gateway](https://vercel.com/docs/ai-gateway),
-which needs a credential. Either link `bot/` to a Vercel project, once:
+which needs a credential. Either link the repository to a Vercel project,
+once, from its root:
 
 ```sh
-cd bot && vercel link
+vercel link
 ```
 
 or put an AI Gateway API key in `AI_GATEWAY_API_KEY`. A linked project needs
 no key: `just bot` fetches the project's token (`vercel env pull`, into the
-uncommitted `bot/.env.local`) each time it starts. That token lasts 12 hours,
+uncommitted `services/bot/.env.local`) each time it starts. It is the same
+link, and the same project, that `just demo-deploy` puts the web client's
+demo page on. That token lasts 12 hours,
 so restart a bot that has run longer. Usage is billed to the project's team.
 
 Then start the server and the bot, naming the room, the model and its nickname:
@@ -73,7 +76,7 @@ Every PictoChat message is a drawing, typed text included. So:
   "draw" means draw. The whole briefing is `instructions()` in
   [`src/brain.ts`](src/brain.ts).
 
-Text is drawn from [`font.json`](../crates/picto-relay-server/src/font.json),
+Text is drawn from [`font.json`](../../crates/picto-relay-server/src/font.json),
 the table of DS glyphs the server and web client share, laid out as the server
 lays out API text; the tests check the pixels against the server's golden
 samples. Text too long for one message carries on in the next, three at most.
@@ -95,5 +98,5 @@ It is TypeScript that Node runs as it is (Node 22.18 or later); there is no
 build step.
 
 ```sh
-npm --prefix bot test    # type-check, then the unit tests
+npm --prefix services/bot test    # type-check, then the unit tests
 ```

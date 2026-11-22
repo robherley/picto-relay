@@ -50,10 +50,10 @@ const MAX_EVENTS_PER_POLL: usize = 32;
 // --- Web client ------------------------------------------------------------------
 
 /// The browser client. It is built separately (`just web-build` writes
-/// `web/dist`) and embedded here at compile time. `allow_missing` lets the
+/// `services/web/dist`) and embedded here at compile time. `allow_missing` lets the
 /// server compile without it, in which case it says how to build the client.
 #[derive(rust_embed::RustEmbed)]
-#[folder = "../../web/dist"]
+#[folder = "../../services/web/dist"]
 #[allow_missing = true]
 struct WebClient;
 

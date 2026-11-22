@@ -1,4 +1,4 @@
-import table from "../../../crates/picto-relay-server/src/font.json";
+import table from "../../../../crates/picto-relay-server/src/font.json";
 import type { Point } from "./drawing";
 import type { Glyph } from "./typing";
 

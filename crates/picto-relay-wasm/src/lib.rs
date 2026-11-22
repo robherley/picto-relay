@@ -600,13 +600,13 @@ mod tests {
     }
 
     /// Writes or checks the fixture the web client's driver tests replay
-    /// (`web/src/serial/fixtures/incoming-drawing.json`): the frames in which
+    /// (`services/web/src/serial/fixtures/incoming-drawing.json`): the frames in which
     /// a host DS rebroadcasts someone's drawing, and the drawing they carry.
     /// Regenerate with `just protocol-header`.
     #[test]
     fn web_fixture_matches_the_codec() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../web/src/serial/fixtures/incoming-drawing.json");
+            .join("../../services/web/src/serial/fixtures/incoming-drawing.json");
         let sender = MacAddress([0, 9, 8, 7, 6, 5]);
         let mut palette = vec![0; 12288];
         for row in 20..60 {

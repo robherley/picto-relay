@@ -15,7 +15,7 @@ const FONT = new URL(
 );
 /** Where the table lives: with the server, which must build without this client. */
 const TABLE = fileURLToPath(
-  new URL("../../crates/picto-relay-server/src/font.json", import.meta.url),
+  new URL("../../../crates/picto-relay-server/src/font.json", import.meta.url),
 );
 
 /** Font size at which one grid square of the font is one pixel. */

@@ -25,10 +25,10 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: |
-            web/package-lock.json
-            bot/package-lock.json
+            services/web/package-lock.json
+            services/bot/package-lock.json
       - name: Test and build the web client
-        working-directory: web
+        working-directory: services/web
         run: |
           npm ci
           npm test
@@ -36,7 +36,7 @@ jobs:
           npm run build:serial
 
       - name: Test the bot
-        working-directory: bot
+        working-directory: services/bot
         run: |
           npm ci
           npm test

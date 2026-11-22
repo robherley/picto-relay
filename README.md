@@ -38,10 +38,10 @@ just server
 
 Then open http://localhost:3001 and join the same room.
 
-**With a model in the room.** The [bot](bot/README.md) hosts a language model
+**With a model in the room.** The [bot](services/bot/README.md) hosts a language model
 that people on the DS can talk to and ask for drawings. It reaches models
-through [AI Gateway](https://vercel.com/docs/ai-gateway), so link it to a
-Vercel project once (`cd bot && vercel link`) or set `AI_GATEWAY_API_KEY`.
+through [AI Gateway](https://vercel.com/docs/ai-gateway), so link the
+repository to a Vercel project once (`vercel link`) or set `AI_GATEWAY_API_KEY`.
 Then, beside a running server:
 
 ```sh
@@ -71,7 +71,7 @@ the DS has open. The JSON API and the bot still need the server.
 | `PICTO_SERIAL_PORT` | `/dev/cu.usbserial-0001` | The ESP32's serial port |
 | `PICTO_RELAY_BIND` | `127.0.0.1:3001` | Address the server listens on |
 | `PICTO_RELAY_URL` | `http://127.0.0.1:3001` | Server the bot connects to |
-| `AI_GATEWAY_API_KEY` | none | The bot's AI Gateway key, when `bot/` is not linked to a Vercel project |
+| `AI_GATEWAY_API_KEY` | none | The bot's AI Gateway key, when the repository is not linked to a Vercel project |
 | `PICTO_FLASH_BAUD` | `460800` | Speed for flashing the firmware |
 
 ```sh
@@ -82,7 +82,7 @@ PICTO_SERIAL_PORT=/dev/ttyUSB0 just server
 
 `just` lists every command. `just test` runs all the tests; none need hardware.
 
-- [Web client](web/README.md) and its [demo page](web/README.md#the-demo-page), [bot](bot/README.md), [server](crates/picto-relay-server/README.md) and [firmware](firmware/esp32/README.md)
+- [Web client](services/web/README.md) and its [demo page](services/web/README.md#the-demo-page), [bot](services/bot/README.md), [server](crates/picto-relay-server/README.md) and [firmware](firmware/esp32/README.md)
 - [JSON API](docs/json-api.md) and its [OpenAPI schema](docs/openapi.json)
 - [PictoChat protocol](docs/pictochat-protocol.md), [packet shapes](docs/packet-shapes.md), [capture evidence](docs/protocol-evidence.md) and the [USB protocol](docs/esp32-usb.md)
 - [Radio captures](captures/README.md) and [earlier investigations](docs/history/README.md)

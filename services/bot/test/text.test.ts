@@ -8,7 +8,7 @@ import { BASELINE, FIRST_LINE_LETTERS, LINE_HEIGHT, LINE_LETTERS, MESSAGE_LETTER
 
 /** The server's golden samples: a text, its ink, and the hash of its bitmap. */
 const FIXTURES = JSON.parse(
-  readFileSync(new URL("../../crates/picto-relay-server/tests/text-fixtures.json", import.meta.url), "utf8"),
+  readFileSync(new URL("../../../crates/picto-relay-server/tests/text-fixtures.json", import.meta.url), "utf8"),
 ) as { text: string; ink: Ink; hash: number }[];
 
 /** FNV-1a, as the server's test hashes a bitmap. */

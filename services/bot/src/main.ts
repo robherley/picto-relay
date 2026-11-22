@@ -21,7 +21,7 @@ function describe(tool: string, input: unknown): string {
 async function main(args: Args): Promise<number> {
   if (!args.baseUrl && !gatewayCredential(process.env)) {
     console.error(
-      "No AI Gateway credential. Link a Vercel project (vercel link, in bot/), set AI_GATEWAY_API_KEY, or pass --base-url.",
+      "No AI Gateway credential. Link the repository to a Vercel project (vercel link), set AI_GATEWAY_API_KEY, or pass --base-url.",
     );
     return 2;
   }

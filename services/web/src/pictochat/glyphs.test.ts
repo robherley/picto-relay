@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import tableText from "../../../crates/picto-relay-server/src/font.json?raw";
+import tableText from "../../../../crates/picto-relay-server/src/font.json?raw";
 // The server's golden samples of rendered text.
-import fixtures from "../../../crates/picto-relay-server/tests/text-fixtures.json";
+import fixtures from "../../../../crates/picto-relay-server/tests/text-fixtures.json";
 import { buildFontTable } from "../../scripts/font-table.mjs";
 import { blank, type Ink, pack } from "./drawing";
 import { glyphOf } from "./glyphs";

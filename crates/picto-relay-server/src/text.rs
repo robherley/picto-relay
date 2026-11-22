@@ -3,7 +3,7 @@
 //! tag.
 //!
 //! The glyph bitmaps come from `font.json`, which the web client generates
-//! from the DS font (`npm run glyphs` in `web/`) and draws with too, so text
+//! from the DS font (`npm run glyphs` in `services/web/`) and draws with too, so text
 //! sent through the API and text typed in the browser are the same pixels.
 
 use std::{collections::HashMap, sync::LazyLock};

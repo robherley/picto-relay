@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
-const build = new URL("../../firmware/esp32/build/", import.meta.url).pathname;
+const build = new URL("../../../firmware/esp32/build/", import.meta.url).pathname;
 const output = new URL("../public/firmware/", import.meta.url).pathname;
 
 rmSync(output, { recursive: true, force: true });

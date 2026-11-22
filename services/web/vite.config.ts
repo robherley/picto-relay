@@ -22,7 +22,7 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: serial ? undefined : { "/api": { target: server, ws: true } },
       // The glyph table is imported from the server crate, outside this folder.
-      fs: { allow: [".."] },
+      fs: { allow: ["../.."] },
     },
     worker: { format: "es" },
     build: { target: "es2022" },

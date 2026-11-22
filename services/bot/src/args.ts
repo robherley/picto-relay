@@ -18,7 +18,7 @@ Usage: just bot --room <A-D> --model <id> [--name <nickname>]
                      from $MODEL_API_KEY.
   --help             Show this.
 
-AI Gateway needs a credential: link bot/ to a Vercel project (vercel link),
+AI Gateway needs a credential: link this repository to a Vercel project (vercel link),
 or put an AI Gateway key in $AI_GATEWAY_API_KEY.`;
 
 export interface Args {

@@ -1,25 +1,25 @@
 # Picto Relay web client
 
-The browser UI for [picto-relay-server](../crates/picto-relay-server/README.md),
+The browser UI for [picto-relay-server](../../crates/picto-relay-server/README.md),
 made to look and work like PictoChat on a Nintendo DS: a room list, a message
 log on the top screen, and a drawing area with the DS keyboard on the bottom.
 
 It is a React app built with Vite. The DS look comes from
 [ds.css](https://github.com/spiritov/ds.css), and so does the font: `npm run
 glyphs` turns it into the table of glyph bitmaps
-([`font.json`](../crates/picto-relay-server/src/font.json)) that both this
+([`font.json`](../../crates/picto-relay-server/src/font.json)) that both this
 client and the server draw text with. The REST client is generated from
-[`docs/openapi.json`](../docs/openapi.json) with
+[`docs/openapi.json`](../../docs/openapi.json) with
 [@hey-api/openapi-ts](https://heyapi.dev) on every build, so it cannot drift
 from the server; it is not checked in.
 
 ## Build
 
 ```sh
-just web-build      # writes web/dist
+just web-build      # writes services/web/dist
 ```
 
-The Rust server embeds `web/dist` when it compiles, so `just server` and
+The Rust server embeds `services/web/dist` when it compiles, so `just server` and
 `just server-memory` run this first. Nothing else connects the two builds.
 
 ## Develop
@@ -33,7 +33,7 @@ The dev server proxies `/api` (including WebSockets) to `127.0.0.1:3001`; set
 `PICTO_RELAY_URL` to point it at a server somewhere else.
 
 ```sh
-npm --prefix web test   # generate the client, type-check, run unit tests
+npm --prefix services/web test   # generate the client, type-check, run unit tests
 ```
 
 After changing an API type in the server, run `just openapi` to rewrite
@@ -50,14 +50,14 @@ and Edge on a computer; other browsers are told so.
 
 ```sh
 just demo           # http://localhost:5173 with hot reload
-just demo-build     # static files in web/dist-demo, to host anywhere over HTTPS
+just demo-build     # static files in services/web/dist-demo, to host anywhere over HTTPS
 ```
 
 Only one program can use the serial port, so stop the server first.
 
 - **The protocol is the server's.** What goes in each command and what each
   packet means comes from the Rust crates the server uses, compiled to
-  WebAssembly ([picto-relay-wasm](../crates/picto-relay-wasm/README.md)).
+  WebAssembly ([picto-relay-wasm](../../crates/picto-relay-wasm/README.md)).
   [`src/serial/driver.ts`](src/serial/driver.ts) adds the timing, and is tested
   against a stand-in for the firmware that speaks the real framing.
 - **A worker owns the port.** The firmware gives up on a host it has not heard

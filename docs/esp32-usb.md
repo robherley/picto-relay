@@ -8,7 +8,7 @@ host one.
 
 The host is usually the relay server. The web client's demo page is one too:
 it speaks this protocol from the browser, over Web Serial, with the same Rust
-code compiled to WebAssembly (see the [web client](../web/README.md#the-demo-page)).
+code compiled to WebAssembly (see the [web client](../services/web/README.md#the-demo-page)).
 
 The protocol is defined once, in `crates/picto-relay-link/src/lib.rs`. The
 firmware's `main/link_protocol.h` is generated from it (`just protocol-header`)
